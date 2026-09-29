@@ -1,27 +1,8 @@
 """Tests for the pure analysis functions in job_searcher.py (no network, no Excel files)."""
-import json
-import os
-import sys
-
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
-import job_searcher as js  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def cfg():
-    with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
-        return json.load(f)
-
-
-def make_job(**kw):
-    job = {"id": "1", "title": "Junior Python Developer", "companyName": "Acme",
-           "location": "Istanbul, Türkiye", "descriptionText": "Python and SQL.",
-           "seniorityLevel": "Entry level"}
-    job.update(kw)
-    return job
+import job_searcher as js
+from conftest import make_job  # cfg fixture and import path also come from conftest.py
 
 
 # ---------- config consistency ----------
