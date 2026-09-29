@@ -1,0 +1,18 @@
+# scraped data and run logs stay local
+output/
+logs/
+~$*
+
+# secrets and personal details
+.env
+COPILOT_AGENT_SETUP.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Claude Code per-user settings
+.claude/settings.local.json

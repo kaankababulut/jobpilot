@@ -1,0 +1,41 @@
+{
+  "searches": ["Software Engineer", "Data Engineer", "Data Analyst"],
+  "regions": [
+    {"name": "Worldwide",       "geo_id": "92000000",  "remote_only": true,  "limit_per_search": 30},
+    {"name": "European Union",  "geo_id": "91000000",  "remote_only": true,  "limit_per_search": 25},
+    {"name": "Türkiye",         "geo_id": "102105699", "remote_only": false, "limit_per_search": 20}
+  ],
+  "himalayas": {
+    "enabled": true,
+    "country": "TR",
+    "window_hours": 72,
+    "searches": ["software engineer", "developer", "data engineer", "data analyst"]
+  },
+  "work_authorization": ["Türkiye"],
+  "open_locations": ["Türkiye", "Turkey", "Worldwide", "Anywhere", "European Union", "Europe", "EMEA"],
+  "drop_internship_mills": true,
+  "exclude_companies": ["Jobright.ai", "Swooped", "Haystack", "Why Hiring", "LueinHire", "internmo", "Jobgether"],
+  "output_dir": "output",
+  "master_window_days": 30,
+
+  "include_title_keywords": [
+    "engineer", "developer", "software", "data", "analyst", "analytics", "intelligence",
+    "backend", "back-end", "frontend", "front-end", "full stack", "fullstack", "mobile",
+    "devops", "machine learning", "ml ", "ai ", "yazılım", "veri", "analist", "mühendis",
+    "geliştirici", "intern", "stajyer", "staj", "trainee", "new grad", "graduate", "gennext"
+  ],
+  "exclude_title_keywords": [
+    "senior", "sr.", "lead", "principal", "manager", "head of", "director", "architect",
+    "kıdemli", "deneyimli", "mid-level", "mid level", "uzman mühendis", "yönetici", "müdür", "marketing", "pazarlama", "sales",
+    "satış", "finance", "finans", "hr ", "insan kaynakları"
+  ],
+  "exclude_seniority": ["Mid-Senior level", "Director", "Executive"],
+
+  "cv_skills": [
+    "Python", "Java", "C", "JavaScript", "TypeScript", "HTML/CSS", "MATLAB",
+    "React", "React Native", "Node.js", "Express", "Dash/Plotly", "MySQL", "SQL",
+    "Firebase", "Git", "Jira", "Pydantic", "Pandas", "NumPy", "XGBoost", "Machine Learning",
+    "ETL", "Web Scraping", "Data Visualization", "Multi-agent / LLM", "UML", "Figma",
+    "Agile/Scrum", "Testing", "REST API", "SQL Server", "English"
+  ]
+}
