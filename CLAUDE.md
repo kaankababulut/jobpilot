@@ -12,7 +12,7 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 
 ## Hard rules
 - **Never run `job_searcher.py` or `run_now.cmd`.** Each run costs about $0.45 of Apify credit. Ask the owner first.
-- **Don't rename or move `job_searcher.py` or `config.json`.** Windows Task Scheduler runs `job_searcher.py` from this folder at 09:00. Refactor by extracting modules that `job_searcher.py` imports, and keep it as the entry point.
+- **Don't rename or move `job_searcher.py` or `config.json`.** Windows Task Scheduler runs `job_searcher.py` from this folder at 12:00. Refactor by extracting modules that `job_searcher.py` imports, and keep it as the entry point.
 - Excel output must keep working until the owner says otherwise. New storage (Postgres) is added alongside it, not instead of it.
 - Secrets live only in environment variables or `.env` (git-ignored): `APIFY_TOKEN`, `POSTGRES_*`, `ANTHROPIC_API_KEY`. Never print them or put them in code.
 - `output/` and `logs/` hold scraped data and stay out of git.

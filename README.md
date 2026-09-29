@@ -1,6 +1,6 @@
 # Daily Job Searcher
 
-Every day at **09:00**, Windows Task Scheduler ("Daily LinkedIn Job Search") runs `job_searcher.py`:
+Every day at **12:00**, Windows Task Scheduler ("Daily LinkedIn Job Search") runs `job_searcher.py`:
 
 1. Searches, for each title in `config.json` (Internship + Entry level, posted in the past 24h):
    - LinkedIn through Apify: **remote** jobs Worldwide and in the European Union, plus all jobs in Türkiye.
@@ -18,5 +18,5 @@ Every day at **09:00**, Windows Task Scheduler ("Daily LinkedIn Job Search") run
 
 - **Cost:** about $0.40–0.45 of Apify credit per run (~$12–14/month); Himalayas is free. The Apify free plan's $5/month runs out after ~11 days, then runs fail until next month (no surprise charges on the free plan). To stay within $5, lower `limit_per_search` in `regions`, e.g. Worldwide 10, EU 10, Türkiye 15.
 - **Token:** read from the `APIFY_TOKEN` user environment variable.
-- **PC off at 09:00?** The task runs at the next login.
+- **PC off at 12:00?** The task runs at the next login.
 - **Stop it:** Task Scheduler → "Daily LinkedIn Job Search" → Disable.

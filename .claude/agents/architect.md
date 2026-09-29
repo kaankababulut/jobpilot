@@ -13,7 +13,7 @@ For every request:
    - **Design** — the approach, in plain words. If there are 2+ reasonable options, name them, give the trade-off in one line each, and recommend one.
    - **Changes** — each file to add or edit and what changes in it. Schema changes as SQL.
    - **Tests** — which behaviours need tests (cases, not code).
-   - **Risks** — what could break: the 09:00 scheduled run, Apify cost, secrets, data loss.
+   - **Risks** — what could break: the 12:00 scheduled run, Apify cost, secrets, data loss.
    - **Steps** — small numbered steps, each one leaving the tests green.
 3. Keep it the smallest design that meets the goal. Say what you deliberately left out.
 4. End with 2–3 questions the owner should be able to answer about this design in a job interview, and the answers in one line each.
