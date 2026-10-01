@@ -83,3 +83,29 @@ def get_job(conn, job_id: int) -> dict | None:
             "SELECT s.name, s.category, s.on_cv FROM job_skills js JOIN skills s USING (skill_id) "
             "WHERE js.job_id = %s ORDER BY s.name", (job_id,)).fetchall()
     return job
+
+
+def top_skills(conn, days: int = 30, category: str | None = None, limit: int = 20) -> list[dict]:
+    """Most-demanded skills among jobs first seen in the last `days` days (new postings, as in the README).
+    share = jobs with the skill / all jobs in the window, so it doesn't change with the category filter."""
+    params: list = [days]
+    cat_sql = ""
+    if category is not None:
+        cat_sql = "WHERE s.category = %s "
+        params.append(category)
+    sql = ("WITH win AS (SELECT id FROM jobs WHERE first_seen >= current_date - %s::int), "
+           "total AS (SELECT count(*) AS n FROM win) "
+           "SELECT s.name, s.category, s.on_cv, count(DISTINCT w.id) AS jobs, "
+           # CASE guards the division; unreachable today (no jobs -> no rows) but cheap insurance
+           "CASE WHEN t.n = 0 THEN 0 ELSE round(count(DISTINCT w.id)::numeric / t.n, 3) END::float8 AS share "
+           "FROM win w JOIN job_skills js ON js.job_id = w.id JOIN skills s USING (skill_id) CROSS JOIN total t "
+           f"{cat_sql}GROUP BY s.skill_id, t.n ORDER BY jobs DESC, s.name LIMIT %s")
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(sql, params + [limit]).fetchall()
+
+
+def recent_runs(conn, limit: int = 10) -> list[dict]:
+    """The latest loads, newest first; id breaks ties when two loads share a loaded_at."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute("SELECT id, kind, run_date, loaded_at, rows_offered, rows_written FROM runs "
+                           "ORDER BY loaded_at DESC, id DESC LIMIT %s", (limit,)).fetchall()

@@ -19,9 +19,10 @@ SEED = [
     ("3", "-", "2026-09-29", "Yes", "Remote?", "Save 50% Intern", "Initech", ""),
     (HIMALAYAS_ID, 40, "2026-09-20", "No", "On-site", "Backend Engineer", "50 Apples", "Kubernetes"),
     ("5", 90, "2026-09-30", "Yes", "Hybrid", "QA Tester", "acme labs", "Python"),
+    ("6", 30, "2026-09-29", "No", "Remote", "Intern C:\\dev Tools", "Umbrella", ""),
 ]
 # score DESC NULLS LAST, then last_seen DESC, then id: 2 and 5 tie on both, so insert order decides
-ORDER = ["2", "5", "1", HIMALAYAS_ID, "3"]
+ORDER = ["2", "5", "1", HIMALAYAS_ID, "6", "3"]
 
 
 @pytest.fixture
@@ -51,12 +52,12 @@ def test_paging_walks_the_same_order(pg, ids):
 
 @pytest.mark.parametrize("kw, expected", [
     ({"open_to_you": True}, ["5", "1", "3"]),
-    ({"open_to_you": False}, ["2", HIMALAYAS_ID]),
+    ({"open_to_you": False}, ["2", HIMALAYAS_ID, "6"]),
     ({"min_score": 90}, ["2", "5", "1"]),
-    ({"min_score": 0}, ["2", "5", "1", HIMALAYAS_ID]),  # NULL score is not "at least 0"
+    ({"min_score": 0}, ["2", "5", "1", HIMALAYAS_ID, "6"]),  # NULL score is not "at least 0"
     ({"work_type": "Hybrid"}, ["2", "5"]),
     ({"source": "himalayas"}, [HIMALAYAS_ID]),
-    ({"since": dt.date(2026, 9, 29)}, ["2", "5", "1", "3"]),
+    ({"since": dt.date(2026, 9, 29)}, ["2", "5", "1", "6", "3"]),
     ({"skill": "python"}, ["5", "1"]),
     ({"skill": "SQL"}, ["2", "1"]),
     ({"skill": "Rust"}, []),
@@ -64,7 +65,7 @@ def test_paging_walks_the_same_order(pg, ids):
     ({"q": "analyst"}, ["2"]),                          # title
     ({"q": "50%"}, ["3"]),                              # % is literal: "50 Apples" doesn't match
     ({"q": "_"}, []),                                   # _ is literal, not "any one character"
-    ({"q": "C:\\dev"}, []),                             # backslash escape works in real Postgres
+    ({"q": "C:\\dev"}, ["6"]),                          # unescaped, \d would mean a plain "d" and miss
     ({"q": EVIL}, []),                                  # injection strings are just data
     ({"skill": EVIL}, []),
     ({"open_to_you": True, "skill": "Python"}, ["5", "1"]),
@@ -93,3 +94,54 @@ def test_get_job_returns_full_record_with_skills(pg, ids):
 
 def test_get_job_unknown_id_is_none(pg, ids):
     assert queries.get_job(pg, max(ids.values()) + 1) is None
+
+
+# ---------- top_skills ----------
+@pytest.fixture
+def window(pg) -> dt.date:
+    # dates relative to the server's current_date, not Python's, so the test can't straddle midnight
+    today = pg.execute("SELECT current_date").fetchone()[0]
+    jobs = [("a", 0, "Python, SQL"), ("b", 30, "Python, Docker"), ("c", 31, "Python, Kubernetes"), ("d", 5, "")]
+    load(pg, [rec(**{"Job ID": sid, "Run Date": (today - dt.timedelta(days=ago)).isoformat(),
+                     "Skills You Have": skills, "Skills To Learn": ""}) for sid, ago, skills in jobs])
+    return today
+
+
+def test_top_skills_counts_share_and_window_boundary(pg, window):
+    # a, b (exactly 30 days ago) and d (no skills) are in the window; c (31 days ago) is not
+    rows = queries.top_skills(pg, days=30)
+    assert [(r["name"], r["jobs"], r["share"]) for r in rows] == \
+        [("Python", 2, 0.667), ("Docker", 1, 0.333), ("SQL", 1, 0.333)]  # jobs DESC, then name
+    assert {r["name"]: r["on_cv"] for r in rows} == {"Python": True, "Docker": False, "SQL": True}
+    assert rows[0]["category"] == CATEGORIES["Python"]
+
+
+def test_top_skills_narrow_window_and_limit(pg, window):
+    assert [(r["name"], r["share"]) for r in queries.top_skills(pg, days=0)] == [("Python", 1.0), ("SQL", 1.0)]
+    assert [r["name"] for r in queries.top_skills(pg, days=30, limit=1)] == ["Python"]
+
+
+def test_top_skills_category_filter_keeps_window_total(pg, window):
+    cat = CATEGORIES["Docker"]
+    in_window = {"Python": 2, "Docker": 1, "SQL": 1}
+    expected = sorted(((n, c) for n, c in in_window.items() if CATEGORIES[n] == cat), key=lambda x: (-x[1], x[0]))
+    rows = queries.top_skills(pg, days=30, category=cat)
+    assert [(r["name"], r["jobs"]) for r in rows] == expected
+    assert all(r["share"] == round(r["jobs"] / 3, 3) for r in rows)  # still out of all 3 jobs in the window
+    assert queries.top_skills(pg, category=EVIL) == []
+
+
+def test_top_skills_empty_window(pg):
+    assert queries.top_skills(pg) == []  # no jobs: no rows, and no division by zero
+
+
+# ---------- recent_runs ----------
+def test_recent_runs_newest_first_with_id_tiebreak(pg):
+    pg.execute("INSERT INTO runs (kind, run_date, loaded_at, rows_offered, rows_written) VALUES "
+               "('backfill', '2026-09-20', '2026-09-20 12:00+00', 5, 5), "
+               "('daily', '2026-09-29', '2026-09-29 12:00+00', 10, 7), "
+               "('daily', '2026-09-29', '2026-09-29 12:00+00', 10, 0)")  # same loaded_at: higher id first
+    rows = queries.recent_runs(pg)
+    assert [(r["kind"], r["rows_written"]) for r in rows] == [("daily", 0), ("daily", 7), ("backfill", 5)]
+    assert set(rows[0]) == {"id", "kind", "run_date", "loaded_at", "rows_offered", "rows_written"}
+    assert [r["id"] for r in queries.recent_runs(pg, limit=2)] == [r["id"] for r in rows[:2]]
