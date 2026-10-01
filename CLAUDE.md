@@ -9,7 +9,8 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 - `jobpilot/`: `records.py` (Excel row → DB record, pure), `db.py` (idempotent upserts, `safe_load`), `backfill.py` (`python -m jobpilot.backfill` loads existing Excel files).
 - `config.json`: search titles, regions, filters and the CV skill list (`cv_skills` = skills the owner already has).
 - `tests/`: pytest suite (analysis, record mapping, loader). DB tests are opt-in: `python -m pytest -q -m db` (needs the container; uses a throwaway schema).
-- `docker-compose.yml` + `db/init/`: local PostgreSQL (with pgvector). Tables: jobs, skills, job_skills, runs. Init scripts only run on an empty volume, so the next schema change needs a migration.
+- `docker-compose.yml`: local PostgreSQL (with pgvector). Tables: jobs, skills, job_skills, runs.
+- `db/migrations/` + `jobpilot/migrate.py`: the schema as numbered SQL files, applied by `python -m jobpilot.migrate`. Schema changes go in a new file (002_...); never edit an applied one.
 
 ## Hard rules
 - **Never run `job_searcher.py` or `run_now.cmd`.** Each run costs about $0.45 of Apify credit. Ask the owner first.
@@ -23,6 +24,7 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 ## Commands
 - Tests: `python -m pytest -q` (a hook runs this automatically after every .py edit)
 - Database: `docker compose up -d` (needs Docker Desktop running), `docker compose exec db psql -U jobs -d jobs`
+- Schema: `python -m jobpilot.migrate` (fresh database; `--baseline` once for a database built before migrations)
 - Stop the database: `docker compose down` (add `-v` only to wipe the data)
 
 ## Workflow (agents in .claude/agents/)

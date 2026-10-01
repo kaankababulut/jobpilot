@@ -44,8 +44,13 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Tests
         run: python -m pytest -q
+      - name: Migrations
+        # builds the empty service database from scratch, the same way a fresh local setup does
+        env:
+          DATABASE_URL: postgresql://jobs:ci@127.0.0.1:5432/jobs
+        run: python -m jobpilot.migrate
       - name: Database tests
-        # the pg fixture builds a throwaway schema from db/init/001_schema.sql;
+        # the pg fixture applies db/migrations into a throwaway schema;
         # JOBPILOT_REQUIRE_DB=1 makes it fail instead of skip if this database is unreachable
         env:
           DATABASE_URL: postgresql://jobs:ci@127.0.0.1:5432/jobs

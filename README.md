@@ -26,7 +26,8 @@ flowchart LR
 | `jobpilot/records.py` | Maps one Excel row to a `jobs` record (pure, no database) |
 | `jobpilot/db.py` | Upserts into Postgres; `safe_load` is what the daily run calls |
 | `jobpilot/backfill.py` | Loads existing Excel files into Postgres |
-| `db/init/001_schema.sql` | Database schema (runs once, on the first container start) |
+| `db/migrations/*.sql` | Database schema as numbered migrations, applied by `python -m jobpilot.migrate` |
+| `jobpilot/migrate.py` | Applies new migrations in order and records them in `schema_migrations` |
 | `COPILOT_AGENT_SETUP.md` | Agent instructions and setup steps |
 | `learning_log.md` | Track new skills; upload it to the agent |
 
@@ -41,7 +42,8 @@ flowchart LR
 2. Docker Desktop → Settings → General → turn on **Start Docker Desktop when you sign in**. The container has `restart: unless-stopped`, so the database is up before the 12:00 run.
 3. Copy `.env.example` to `.env`. Pick a password and put it in both `POSTGRES_PASSWORD` and `DATABASE_URL`. Keep `127.0.0.1` (not `localhost`): it avoids a slow IPv6 attempt. If the password has symbols like `@` or `:`, URL-encode them in `DATABASE_URL`.
 4. Start the database: `docker compose up -d`. Check it with `docker compose ps` (should say "healthy").
-5. Load the Excel files you already have: `python -m jobpilot.backfill`. With no arguments it loads `output/daily/*.xlsx` oldest first, then the master. You can also pass file paths. It is safe to run again.
+5. Create the tables: `python -m jobpilot.migrate`. It applies every migration in `db/migrations/` that hasn't run yet, so run it again after pulling new ones. A database created before migrations existed (by the old `db/init` script) already has the tables: run `python -m jobpilot.migrate --baseline` once instead, which records 001 as applied without running it.
+6. Load the Excel files you already have: `python -m jobpilot.backfill`. With no arguments it loads `output/daily/*.xlsx` oldest first, then the master. You can also pass file paths. It is safe to run again.
 
 SQL shell: `docker compose exec db psql -U jobs -d jobs`.
 
@@ -99,4 +101,6 @@ ORDER BY match_score DESC, last_seen DESC;
 
 **Microsoft and low-code skills are tracked, not claimed.** Copilot Studio, Power Platform, Azure AI and similar skills are now detected in postings, to measure real demand. They are not in `cv_skills`, so match scores stay honest.
 
-**Left out on purpose (for now):** a migrations tool (needed before the next schema change), tracking whether a job is still listed, de-duplicating the same job across LinkedIn and Himalayas, and storing full descriptions (they are cut at 8,000 characters, as in Excel; revisit for embeddings in roadmap step 4).
+**Plain-SQL migrations.** Every schema change is a new numbered file in `db/migrations/`; an applied file is never edited. Each file runs in its own transaction and is recorded in `schema_migrations`, so re-running applies only what's new. Rejected: Alembic (built around an ORM this project doesn't have) and Docker init scripts (they only run on an empty volume, so they can't change an existing database).
+
+**Left out on purpose (for now):** tracking whether a job is still listed, de-duplicating the same job across LinkedIn and Himalayas, and storing full descriptions (they are cut at 8,000 characters, as in Excel; revisit for embeddings in roadmap step 4).

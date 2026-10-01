@@ -1,13 +1,11 @@
 """Integration tests for jobpilot.migrate against the local Postgres (pytest -m db).
-The pg fixture's schema already holds the 001 tables, which suits the baseline tests;
-`empty` switches the same connection to a second, empty throwaway schema for the apply tests."""
-import os
-import shutil
+The pg fixture's schema is built by the real migrations; `legacy` drops its schema_migrations table
+to mimic a database the old db/init script built (the baseline case), and `empty` switches the
+same connection to a second, empty throwaway schema for the apply tests."""
 import uuid
 
 import pytest
 
-from conftest import ROOT
 from jobpilot import migrate
 from jobpilot.migrate import MigrationFailed
 from test_db import one
@@ -29,6 +27,13 @@ def empty(pg):
                 pg.autocommit = True
         finally:
             pg.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+
+@pytest.fixture
+def legacy(pg):
+    # the 001 tables without schema_migrations: what the real database looks like before --baseline
+    pg.execute("DROP TABLE schema_migrations")
+    return pg
 
 
 def write(directory, **files) -> str:
@@ -82,31 +87,31 @@ def test_failure_rolls_back_alone_on_non_autocommit_connection(empty, tmp_path):
     assert recorded(empty) == [("001", "a")] and not table_exists(empty, "b")
 
 
-def test_duplicate_table_on_fresh_db_is_marked_fresh(pg, tmp_path):
-    # pg's schema has the db/init tables but no schema_migrations: what the CLI hint is for
+def test_duplicate_table_on_fresh_db_is_marked_fresh(legacy, tmp_path):
+    # tables but no schema_migrations: what the CLI hint is for
     d = write(tmp_path, **{"001_initial": "CREATE TABLE jobs (id INT)"})
     with pytest.raises(MigrationFailed) as exc:
-        migrate.apply(pg, d)
+        migrate.apply(legacy, d)
     assert exc.value.fresh and exc.value.cause.sqlstate == migrate.DUPLICATE_TABLE
 
 
-def test_real_initial_schema_applies(empty, tmp_path):
-    # the multi-statement db/init file, as 3.4 will move it, runs through the runner
-    shutil.copy(os.path.join(ROOT, "db", "init", "001_schema.sql"), tmp_path / "001_initial.sql")
-    assert [m.name for m in migrate.apply(empty, str(tmp_path))] == ["initial"]
+def test_real_migrations_build_an_empty_schema(empty):
+    # the real db/migrations directory, so a broken or misnamed migration fails here and in CI
+    assert [m.version for m in migrate.apply(empty, migrate.DEFAULT_DIR)][0] == "001"
     for t in ("jobs", "skills", "job_skills", "runs"):
         assert table_exists(empty, t)
+    assert recorded(empty)[0] == ("001", "initial")
 
 
-def test_baseline_records_001_without_running_it(pg, tmp_path):
+def test_baseline_records_001_without_running_it(legacy, tmp_path):
     d = write(tmp_path, **{"001_initial": "SELEKT this would fail if executed",
                            "002_later": "CREATE TABLE later (id INT)"})
-    assert [m.version for m in migrate.baseline(pg, d)] == ["001"]
-    assert recorded(pg) == [("001", "initial")]  # 002 not marked: it hasn't run
-    assert migrate.baseline(pg, d) == []  # twice is a no-op
-    assert recorded(pg) == [("001", "initial")]
-    assert [m.version for m in migrate.apply(pg, d)] == ["002"]  # apply after baseline runs only later ones
-    assert table_exists(pg, "later")
+    assert [m.version for m in migrate.baseline(legacy, d)] == ["001"]
+    assert recorded(legacy) == [("001", "initial")]  # 002 not marked: it hasn't run
+    assert migrate.baseline(legacy, d) == []  # twice is a no-op
+    assert recorded(legacy) == [("001", "initial")]
+    assert [m.version for m in migrate.apply(legacy, d)] == ["002"]  # apply after baseline runs only later ones
+    assert table_exists(legacy, "later")
 
 
 def test_baseline_refuses_without_jobs_table(empty, tmp_path):

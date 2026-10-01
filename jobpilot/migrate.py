@@ -139,7 +139,7 @@ def baseline(conn, directory: str, log: Callable[[str], None] = lambda msg: None
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jobpilot.migrate", description="Apply db/migrations/*.sql")
     parser.add_argument("--baseline", action="store_true",
-                        help="record 001 as applied without running it (database built by db/init)")
+                        help="record 001 as applied without running it (database built by the old db/init script)")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     load_dotenv(os.path.join(ROOT, ".env"))
     url = os.environ.get("DATABASE_URL", "").strip()

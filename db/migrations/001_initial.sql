@@ -1,6 +1,6 @@
--- Runs automatically ONLY the first time the database container starts (empty volume).
--- To re-run after editing: docker compose down -v && docker compose up -d  (this wipes the data)
--- Once real data is loaded, don't edit this file: the next schema change needs a migration.
+-- Migration 001: the initial schema, applied by `python -m jobpilot.migrate`.
+-- Never edit a migration that has been applied: databases that recorded it won't run it again.
+-- New schema changes go in a new numbered file (002_name.sql, ...).
 
 CREATE EXTENSION IF NOT EXISTS vector;
 

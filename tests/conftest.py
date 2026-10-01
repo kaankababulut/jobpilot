@@ -37,6 +37,7 @@ def pg():
     """A connection whose search_path points at a throwaway schema, so tests never touch public tables."""
     import uuid
     from dotenv import load_dotenv
+    from jobpilot import migrate
     from jobpilot.db import connect
     load_dotenv(os.path.join(ROOT, ".env"))  # doesn't override variables already set (CI sets its own)
     url = os.environ.get("DATABASE_URL")
@@ -51,8 +52,8 @@ def pg():
     try:
         conn.execute(f"CREATE SCHEMA {schema}")
         conn.execute(f"SET search_path TO {schema}, public")  # public holds the vector extension
-        with open(os.path.join(ROOT, "db", "init", "001_schema.sql"), encoding="utf-8") as f:
-            conn.execute(f.read())
+        # the real migrations, so tests run on the same schema a fresh database gets (autocommit is on, as apply needs)
+        migrate.apply(conn, migrate.DEFAULT_DIR)
         yield conn
     finally:
         conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
