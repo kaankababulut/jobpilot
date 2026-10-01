@@ -1,7 +1,8 @@
-"""Loads existing Excel files into Postgres: python -m jobpilot.backfill [paths...]
+"""Loads existing Excel files into Postgres: python -m jobpilot.backfill [--url-env NAME] [paths...]
 With no paths it loads output/daily/*.xlsx oldest first, then the master. Safe to re-run:
 the upserts are idempotent, and older files can't overwrite newer data (see jobpilot.db).
 Unlike the daily run it fails loudly: any error is printed and the exit code is 1."""
+import argparse
 import datetime as dt
 import glob
 import json
@@ -12,6 +13,7 @@ from typing import Callable
 
 import job_searcher as js
 from jobpilot.db import connect, prepare, record_run, redact, upsert_jobs
+from jobpilot.migrate import add_url_env
 
 try:
     from dotenv import load_dotenv
@@ -50,18 +52,22 @@ def load_file(conn, path: str, categories: dict[str, str], cv_skills: set[str],
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
+    parser = argparse.ArgumentParser(prog="python -m jobpilot.backfill", description="Load Excel files into Postgres")
+    parser.add_argument("paths", nargs="*", help="Excel files to load (default: output/daily/*.xlsx, then the master)")
+    add_url_env(parser)
+    # intermixed, so paths may come before or after --url-env like with any other CLI
+    args = parser.parse_intermixed_args(sys.argv[1:] if argv is None else argv)
     load_dotenv(os.path.join(js.HERE, ".env"))
-    url = os.environ.get("DATABASE_URL", "").strip()
+    url = os.environ.get(args.url_env, "").strip()
     if not url:
-        print("ERROR: DATABASE_URL not set", file=sys.stderr)
+        print(f"ERROR: {args.url_env} not set", file=sys.stderr)  # the name only, never a value
         return 1
     path = "config.json"  # names the failing file in the error message
     try:
         with open(os.path.join(js.HERE, path), encoding="utf-8") as f:
             cfg = json.load(f)
         out = cfg["output_dir"] if os.path.isabs(cfg["output_dir"]) else os.path.join(js.HERE, cfg["output_dir"])
-        paths = argv or default_paths(out)
+        paths = args.paths or default_paths(out)
         if not paths:  # loading nothing is almost certainly a wrong output_dir, so don't report success
             print(f"ERROR: no Excel files found in {out}", file=sys.stderr)
             return 1
