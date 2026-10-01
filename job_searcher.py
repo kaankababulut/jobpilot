@@ -365,9 +365,10 @@ def write_jobs_sheet(ws, rows):
             row[open_].fill = PatternFill("solid", fgColor="E3F4E8")
     n = ws.max_row
     sc = ws.cell(row=1, column=score + 1).column_letter
-    ws.conditional_formatting.add(f"{sc}2:{sc}{n}", ColorScaleRule(
-        start_type="num", start_value=30, start_color="F8696B", mid_type="num", mid_value=55,
-        mid_color="FFEB84", end_type="num", end_value=80, end_color="63BE7B"))
+    if n > 1:  # a day with no new jobs has only the header; M2:M1 would crash openpyxl
+        ws.conditional_formatting.add(f"{sc}2:{sc}{n}", ColorScaleRule(
+            start_type="num", start_value=30, start_color="F8696B", mid_type="num", mid_value=55,
+            mid_color="FFEB84", end_type="num", end_value=80, end_color="63BE7B"))
     ws.auto_filter.ref = f"A1:{ws.cell(row=1, column=len(JOB_COLS)).column_letter}{n}"
 
 

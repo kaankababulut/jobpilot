@@ -131,3 +131,11 @@ def test_years_required_lowers_score(cfg):
 def test_score_is_clamped(cfg):
     job = make_job(location="Nowhere, Mars", descriptionText="10 years. Must be a U.S. citizen.")
     assert 0 <= js.analyse(job, cfg)["score"] <= 100
+
+
+# ---------- Excel output ----------
+def test_workbook_with_no_new_jobs_is_written(cfg, tmp_path):
+    # a quiet day: postings came back but none were new, so only the header row exists
+    path = str(tmp_path / "jobs_2026-10-02.xlsx")
+    assert js.build_workbook(path, [], cfg, "2026-10-02 only")
+    assert js.load_master_rows(path) == []
