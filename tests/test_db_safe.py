@@ -138,3 +138,96 @@ def test_encoded_password_is_hidden_in_both_forms(monkeypatch):
     lines = []
     assert db.safe_load([], "2026-10-01", {}, set(), lines.append) is False
     assert len(lines) == 1 and "p@ss" not in lines[0] and "p%40ss" not in lines[0]
+
+
+AZURE_URL = "postgresql://jobsadmin:Azur3Secret@jobpilot.postgres.database.azure.com:5432/jobs?sslmode=require"
+AZURE = {"url_var": "AZURE_DATABASE_URL", "label": "Azure Postgres"}
+
+
+def test_named_target_missing_url_skips_even_if_default_is_set(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", URL)  # the local URL must not be used as a fallback
+    monkeypatch.delenv("AZURE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(db, "connect", lambda url: pytest.fail("connect should not be called"))
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append, **AZURE) is False
+    assert lines == ["Azure Postgres load skipped: AZURE_DATABASE_URL not set"]
+
+
+def test_named_target_reads_its_own_url_and_redacts_it(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", URL)
+    monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
+    seen = []
+
+    def boom(url):
+        seen.append(url)
+        raise RuntimeError(f"could not connect to {url} (password Azur3Secret rejected)")
+    monkeypatch.setattr(db, "connect", boom)
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append, **AZURE) is False
+    assert seen == [AZURE_URL]
+    assert len(lines) == 1 and lines[0].startswith("WARNING: Azure Postgres load skipped: RuntimeError:")
+    assert AZURE_URL not in lines[0] and "Azur3Secret" not in lines[0]
+    assert "firewall" not in lines[0]  # not a pg_hba-style rejection
+
+
+def test_firewall_rejection_adds_hint(monkeypatch):
+    monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
+
+    def boom(url):
+        raise RuntimeError('connection failed: FATAL:  no pg_hba.conf entry for host "203.0.113.7", '
+                           'user "jobsadmin", database "jobs", SSL encryption\nsecond line')
+    monkeypatch.setattr(db, "connect", boom)
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append, **AZURE) is False
+    assert len(lines) == 1 and "\n" not in lines[0]
+    assert lines[0].startswith("WARNING: Azure Postgres load skipped: RuntimeError:")
+    assert lines[0].endswith("; if your IP changed, update the database firewall rule")
+    assert "Azur3Secret" not in lines[0] and "second line" not in lines[0]
+
+
+def test_not_allowed_rejection_adds_hint(monkeypatch):
+    monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
+
+    def boom(url):
+        raise RuntimeError("Client with IP address '203.0.113.7' is not allowed to connect to this server")
+    monkeypatch.setattr(db, "connect", boom)
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append, **AZURE) is False
+    assert lines[0].endswith("update the database firewall rule")
+
+
+def test_named_target_happy_path(monkeypatch):
+    monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
+    seen = []
+    monkeypatch.setattr(db, "connect", lambda url: seen.append(url) or FakeConn())
+    monkeypatch.setattr(db, "prepare", lambda rows, log: ["r1"])
+    monkeypatch.setattr(db, "upsert_jobs", lambda c, recs, cats, cv: len(recs))
+    monkeypatch.setattr(db, "record_run", lambda *args: None)
+    lines = []
+    assert db.safe_load([{}, {}], "2026-10-01", {}, set(), lines.append, **AZURE) is True
+    assert seen == [AZURE_URL]
+    assert lines == ["Azure Postgres: wrote 1 of 2 jobs"]
+
+
+def test_named_target_never_raises_with_raising_log(monkeypatch):
+    monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
+
+    def boom(url):
+        raise RuntimeError("no pg_hba.conf entry for host")
+    monkeypatch.setattr(db, "connect", boom)
+    assert db.safe_load([], "2026-10-01", {}, set(), raising_log, **AZURE) is False
+    monkeypatch.delenv("AZURE_DATABASE_URL")
+    assert db.safe_load([], "2026-10-01", {}, set(), raising_log, **AZURE) is False
+
+
+def test_failed_local_load_does_not_block_azure_load(monkeypatch):
+    import job_searcher
+    calls = []
+
+    def fake_safe_load(rows, today, cats, cv, log, **kw):
+        calls.append((rows, today, cats, cv, kw))
+        return False  # the local load fails; the Azure one must still be attempted
+    monkeypatch.setattr(job_searcher.jobdb, "safe_load", fake_safe_load)
+    job_searcher.load_databases([{"Job ID": "1"}], "2026-10-01", {"cv_skills": ["Python"]})
+    assert [c[4] for c in calls] == [{}, {"url_var": "AZURE_DATABASE_URL", "label": "Azure Postgres"}]
+    assert calls[0][:4] == calls[1][:4] and calls[0][3] == {"Python"}

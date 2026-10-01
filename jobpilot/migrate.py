@@ -1,7 +1,7 @@
 """A tiny migration runner: numbered plain-SQL files in db/migrations/ (NNN_name.sql),
 applied in order, each in its own transaction, and recorded in a schema_migrations table.
 Chosen over Alembic because there's no ORM and one developer; this module is just SQL files and a loop.
-Usage: python -m jobpilot.migrate [--baseline]
+Usage: python -m jobpilot.migrate [--baseline] [--url-env NAME]
 Migration files must not contain BEGIN/COMMIT or CREATE INDEX CONCURRENTLY: the runner wraps each
 file in its own transaction, and those statements either break that or can't run inside one."""
 import argparse
@@ -136,15 +136,22 @@ def baseline(conn, directory: str, log: Callable[[str], None] = lambda msg: None
     return first
 
 
+def add_url_env(parser: argparse.ArgumentParser) -> None:
+    # the NAME of a variable, not a URL, so a password never lands in shell history or a process list
+    parser.add_argument("--url-env", default="DATABASE_URL", metavar="NAME",
+                        help="environment variable holding the database URL (default: DATABASE_URL)")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m jobpilot.migrate", description="Apply db/migrations/*.sql")
     parser.add_argument("--baseline", action="store_true",
                         help="record 001 as applied without running it (database built by the old db/init script)")
+    add_url_env(parser)
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     load_dotenv(os.path.join(ROOT, ".env"))
-    url = os.environ.get("DATABASE_URL", "").strip()
+    url = os.environ.get(args.url_env, "").strip()
     if not url:
-        print("ERROR: DATABASE_URL not set", file=sys.stderr)
+        print(f"ERROR: {args.url_env} not set", file=sys.stderr)  # the name only, never a value
         return 1
     try:
         with connect(url) as conn:

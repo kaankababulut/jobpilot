@@ -134,3 +134,47 @@ def test_error_returns_1_and_hides_password(monkeypatch, capsys, tmp_path):
     err = capsys.readouterr().err
     assert "s3cretPass" not in err and "second line" not in err
     assert err.startswith("ERROR: backfill failed on x.xlsx: RuntimeError:")
+
+
+# --- --url-env and positional paths ---
+
+def _fake_backfill(monkeypatch, seen):
+    # records which URL and files main used, without a database
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def execute(self, sql): return self
+        def fetchone(self): return (0,)
+    monkeypatch.setattr(backfill, "load_dotenv", lambda *a, **k: False)
+    monkeypatch.setattr(backfill, "connect", lambda url: seen.append(url) or Conn())
+    monkeypatch.setattr(backfill, "load_file", lambda conn, path, *a: seen.append(os.path.basename(path)) or (0, 0))
+    monkeypatch.setattr(backfill, "default_paths", lambda out: pytest.fail("explicit paths were given"))
+
+
+def test_url_env_reads_named_variable_and_keeps_positional_paths(monkeypatch, capsys, tmp_path):
+    seen = []
+    _fake_backfill(monkeypatch, seen)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://local/wrong")
+    monkeypatch.setenv("AZURE_DATABASE_URL", URL)
+    a, b = str(tmp_path / "a.xlsx"), str(tmp_path / "b.xlsx")
+    assert backfill.main([a, "--url-env", "AZURE_DATABASE_URL", b]) == 0
+    assert seen == [URL, "a.xlsx", URL, "b.xlsx", URL]  # one connection per file, then the count
+    assert os.environ["DATABASE_URL"] == "postgresql://local/wrong"
+
+
+def test_positional_paths_without_url_env_use_database_url(monkeypatch, capsys, tmp_path):
+    seen = []
+    _fake_backfill(monkeypatch, seen)
+    monkeypatch.setenv("DATABASE_URL", URL)
+    assert backfill.main([str(tmp_path / "a.xlsx")]) == 0
+    assert seen == [URL, "a.xlsx", URL]
+
+
+def test_url_env_missing_names_the_variable_without_connecting(monkeypatch, capsys):
+    monkeypatch.setattr(backfill, "load_dotenv", lambda *a, **k: False)
+    monkeypatch.setenv("DATABASE_URL", URL)  # must not be used as a fallback
+    monkeypatch.delenv("AZURE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(backfill, "connect", lambda url: pytest.fail("connect should not be called"))
+    assert backfill.main(["--url-env", "AZURE_DATABASE_URL"]) == 1
+    err = capsys.readouterr().err
+    assert err == "ERROR: AZURE_DATABASE_URL not set\n" and URL not in err

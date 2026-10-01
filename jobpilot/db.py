@@ -113,10 +113,15 @@ def redact(e: Exception, url: str) -> str:
     return f"{type(e).__name__}: {msg}"
 
 
+# how a server-side IP allow-list rejection reads: Azure Flexible Server answers
+# 'no pg_hba.conf entry for host "1.2.3.4" ...'; older Azure servers say '... is not allowed to connect'
+FIREWALL_HINTS = ("pg_hba.conf", "not allowed")
+
+
 def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills: set[str],
-              log: Callable[[str], None]) -> bool:
-    """Loads rows into Postgres in one transaction; logs and returns False instead of raising,
-    so a database problem can never break the Excel run."""
+              log: Callable[[str], None], url_var: str = "DATABASE_URL", label: str = "Postgres") -> bool:
+    """Loads rows into the database named by env var `url_var` in one transaction; logs and returns
+    False instead of raising, so a database problem can never break the Excel run."""
     def say(msg: str) -> None:
         # the log writes to the console and logs/run.log, which can fail (locked file, non-UTF-8
         # console); a failed log line must not break the Excel run either
@@ -125,9 +130,9 @@ def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills:
         except Exception:
             pass
 
-    url = os.environ.get("DATABASE_URL", "").strip()
+    url = os.environ.get(url_var, "").strip()
     if not url:
-        say("Postgres load skipped: DATABASE_URL not set")
+        say(f"{label} load skipped: {url_var} not set")
         return False
     # try sits outside the with: if the except were inside, the with-block would exit cleanly
     # and psycopg would commit a partial batch instead of rolling it back
@@ -138,7 +143,10 @@ def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills:
             written = upsert_jobs(conn, prepare(rows, log), categories, cv_skills)
             record_run(conn, "daily", run_date, len(rows), written)
     except Exception as e:  # not BaseException, so Ctrl+C still stops the run
-        say(f"WARNING: Postgres load skipped: {redact(e, url)}")
+        msg = f"WARNING: {label} load skipped: {redact(e, url)}"
+        if any(h in msg.lower() for h in FIREWALL_HINTS):  # a dynamic home IP is the usual cause
+            msg += "; if your IP changed, update the database firewall rule"
+        say(msg)
         return False
-    say(f"Postgres: wrote {written} of {len(rows)} jobs")
+    say(f"{label}: wrote {written} of {len(rows)} jobs")
     return True

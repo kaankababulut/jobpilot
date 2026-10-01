@@ -115,3 +115,37 @@ def test_cli_up_to_date_message_and_session_settings(monkeypatch, capsys, argv, 
     assert capsys.readouterr().out == out
     assert conn.autocommit  # per-file commits need it
     assert conn.sql == ["SET statement_timeout = 0", "SET lock_timeout = '10s'"]
+
+
+# --- --url-env: the name of the variable, never the URL itself ---
+
+def test_url_env_reads_the_named_variable_and_ignores_database_url(monkeypatch, capsys):
+    monkeypatch.setattr(migrate, "load_dotenv", lambda *a, **k: False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://local/wrong")
+    monkeypatch.setenv("AZURE_DATABASE_URL", URL)
+    seen = []
+    monkeypatch.setattr(migrate, "connect", lambda url: seen.append(url) or _FakeConn())
+    monkeypatch.setattr(migrate, "apply", lambda conn, directory, log: [])
+    assert migrate.main(["--url-env", "AZURE_DATABASE_URL"]) == 0
+    assert seen == [URL]
+    assert migrate.os.environ["DATABASE_URL"] == "postgresql://local/wrong"  # untouched
+
+
+def test_url_env_missing_names_the_variable_without_connecting(monkeypatch, capsys):
+    monkeypatch.setattr(migrate, "load_dotenv", lambda *a, **k: False)
+    monkeypatch.setenv("DATABASE_URL", URL)  # set, but not the one asked for: must not be used as a fallback
+    monkeypatch.delenv("AZURE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(migrate, "connect", lambda url: pytest.fail("connect should not be called"))
+    assert migrate.main(["--url-env", "AZURE_DATABASE_URL"]) == 1
+    err = capsys.readouterr().err
+    assert err == "ERROR: AZURE_DATABASE_URL not set\n" and URL not in err
+
+
+def test_baseline_works_with_url_env(monkeypatch, capsys):
+    monkeypatch.setattr(migrate, "load_dotenv", lambda *a, **k: False)
+    monkeypatch.setenv("AZURE_DATABASE_URL", URL)
+    monkeypatch.setattr(migrate, "connect", lambda url: _FakeConn())
+    monkeypatch.setattr(migrate, "apply", lambda *a: pytest.fail("apply should not be called"))
+    monkeypatch.setattr(migrate, "baseline", lambda conn, directory, log: [])
+    assert migrate.main(["--baseline", "--url-env", "AZURE_DATABASE_URL"]) == 0
+    assert capsys.readouterr().out == "001 already recorded\n"
