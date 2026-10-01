@@ -38,11 +38,17 @@ Keep each change small enough to review in 5 minutes.
 Match `job_searcher.py`: compact, plain Python, few dependencies, short comments that explain *why*. Type hints on new functions. New Python dependencies go in `requirements.txt`.
 
 ## Roadmap
-1. Git, agents, tests, Docker Postgres
-2. Load jobs into Postgres (idempotent upserts), Excel kept as an export ← current
-3. FastAPI endpoints + GitHub Actions CI
-4. Embeddings with pgvector, semantic job search
-5. LLM matching agent (tool use) + MCP server over the job database
-6. React/Next.js frontend
-7. Agent evals (quality, hallucinated skills, cost per query)
-8. Cloud deployment
+One read-only HTTPS API serves every consumer (Copilot Studio, Power Automate, Power BI, the custom agent). That's why the API and Azure come before the agents: Microsoft's cloud can't reach localhost.
+
+1. Git, agents, tests, Docker Postgres ✓
+2. Load jobs into Postgres (idempotent upserts), Excel kept as an export ✓
+3. API foundation: SQL migrations runner, read-only FastAPI with an API key, GitHub Actions CI ← current
+4. Deploy to Azure on free tiers (Container Apps + Postgres Flexible, SELECT-only role, budget alert); the 12:00 run also loads into Azure
+5. Copilot Studio agent + Power Automate daily alert over the deployed API (replaces the Excel-based agent in COPILOT_AGENT_SETUP.md)
+6. Power BI dashboard: skill trends, Microsoft-skill demand, match quality
+7. Embeddings with pgvector, semantic search; full descriptions; re-tag skills on stored jobs
+8. Custom LLM matching agent (Claude tool use) + MCP server over the same API
+9. Agent evals (quality, hallucinated skills, cost per query), incl. Copilot Studio vs custom agent
+10. Polish; React/Next.js frontend only if targeting frontend roles
+
+Owner context: GitHub repo is private; no student email, so Azure uses the free account (card) with a budget alert from day one.
