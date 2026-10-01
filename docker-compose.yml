@@ -11,7 +11,7 @@ services:
       - "127.0.0.1:5432:5432"   # only reachable from this PC
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro   # runs once, on first start
+      # no init scripts: the schema comes from `python -m jobpilot.migrate` (db/migrations), one source of truth
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

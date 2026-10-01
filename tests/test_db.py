@@ -92,3 +92,14 @@ def test_record_run(pg):
     db.record_run(pg, "backfill", dt.date(2026, 9, 29), 10, 7)
     assert one(pg, "SELECT kind, run_date, rows_offered, rows_written FROM runs") == \
         ("backfill", dt.date(2026, 9, 29), 10, 7)
+
+
+def test_read_only_connection_rejects_writes(pg):
+    import os
+    import psycopg
+    # a second, real connection with the API's settings; reads work, any write is refused by the server
+    with db.connect(os.environ["DATABASE_URL"], read_only=True) as ro:
+        assert ro.execute("SELECT 1").fetchone() == (1,)
+        ro.rollback()
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            ro.execute("CREATE TEMP TABLE t (x int)")  # even a temp table, so nothing real is at risk

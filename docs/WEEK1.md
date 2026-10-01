@@ -9,7 +9,7 @@
 | `.claude/settings.json` + `.claude/hooks/run_tests.py` | Runs pytest after every Python edit. If tests fail, Claude gets the error and must fix it. | **Guardrails.** Don't trust an agent's "done"; verify it automatically. Exit code 2 = "blocked, here's why". |
 | `tests/test_analysis.py` | 27 tests for the scoring/filter logic. | **Safety net before refactoring.** Week 2 moves code around; these tests prove the behaviour didn't change. |
 | `docker-compose.yml` | Postgres 17 + pgvector in a container. | **Reproducible environments.** Anyone can run `docker compose up` and get the same database. |
-| `db/init/001_schema.sql` | Tables `jobs`, `skills`, `job_skills`. | **Normalization.** Skills get their own table, so skill-trend questions become simple SQL. |
+| `db/init/001_schema.sql` (now `db/migrations/001_initial.sql`) | Tables `jobs`, `skills`, `job_skills`. | **Normalization.** Skills get their own table, so skill-trend questions become simple SQL. |
 | `.env` / `.env.example` | Local DB password (git-ignored) / template (committed). | **Secrets never go in git.** |
 
 ## Checklist

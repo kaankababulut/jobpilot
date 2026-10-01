@@ -29,10 +29,13 @@ UPSERT_SQL = (
 FIRST_SEEN_SQL = "UPDATE jobs SET first_seen = LEAST(first_seen, %s) WHERE source = %s AND source_id = %s"
 
 
-def connect(url: str):
+def connect(url: str, read_only: bool = False):
     import psycopg  # lazy, so a missing driver can't break `import job_searcher`
     # timeouts so a stopped container or a stuck lock fails fast instead of hanging the 12:00 run
-    return psycopg.connect(url, connect_timeout=5, options="-c statement_timeout=30000")
+    options = "-c statement_timeout=30000"
+    if read_only:  # the API's second safety layer: the server itself rejects any write, even a buggy one
+        options += " -c default_transaction_read_only=on"
+    return psycopg.connect(url, connect_timeout=5, options=options)
 
 
 def prepare(rows: list[dict], log: Callable[[str], None]) -> list[dict]:
