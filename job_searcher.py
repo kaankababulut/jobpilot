@@ -462,6 +462,14 @@ def load_master_rows(path):
     return rows
 
 
+def load_databases(rows: list[dict], today: str, cfg: dict) -> None:
+    # alongside Excel, never instead of it: safe_load logs and returns False on any DB problem.
+    # Each target fails safe on its own, and the 30-day window means a missed cloud day catches up next run.
+    categories, cv = {k: v[0] for k, v in SKILLS.items()}, set(cfg["cv_skills"])
+    jobdb.safe_load(rows, today, categories, cv, log)
+    jobdb.safe_load(rows, today, categories, cv, log, url_var="AZURE_DATABASE_URL", label="Azure Postgres")
+
+
 def main():
     # from the script folder, since Task Scheduler's working directory varies; existing env vars win
     load_dotenv(os.path.join(HERE, ".env"))
@@ -523,8 +531,7 @@ def main():
     if build_workbook(master, old + rows, cfg, f"last {cfg['master_window_days']} days"):
         for p in side:  # their rows are now in the master
             os.remove(p)
-    # alongside Excel, never instead of it: safe_load logs and returns False on any DB problem
-    jobdb.safe_load(old + rows, today, {k: v[0] for k, v in SKILLS.items()}, set(cfg["cv_skills"]), log)
+    load_databases(old + rows, today, cfg)
     log(f"Saved {daily} and updated master ({len(old) + len(rows)} jobs).")
 
 
