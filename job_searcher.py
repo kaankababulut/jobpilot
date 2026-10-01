@@ -11,6 +11,11 @@ from collections import Counter
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
+from jobpilot import db as jobdb
+try:
+    from dotenv import load_dotenv
+except ImportError:  # optional: a missing package must not stop the Excel run
+    def load_dotenv(*args, **kwargs): return False
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ACTOR = "curious_coder~linkedin-jobs-scraper"
@@ -88,6 +93,16 @@ SKILLS = {
     "UML": ("Tools & Practices", r"\buml\b"),
     "Figma": ("Tools & Practices", r"\bfigma\b"),
     "SAP": ("Tools & Practices", r"\bsap\b|\babap\b"),
+    # Microsoft stack: tracked to measure how much the market really asks for it
+    "Copilot Studio": ("Microsoft & Low-code", r"copilot studio|power virtual agents"),
+    "Microsoft 365 Copilot": ("Microsoft & Low-code", r"\b(?:microsoft|m365|ms) ?(?:365 )?copilot|copilot for (?:microsoft|m)365"),
+    "GitHub Copilot": ("Microsoft & Low-code", r"github copilot"),
+    "Power Apps": ("Microsoft & Low-code", r"power ?apps"),
+    "Power Automate": ("Microsoft & Low-code", r"power ?automate|microsoft flow"),
+    "Power Platform": ("Microsoft & Low-code", r"power platform|dataverse"),
+    "Azure AI / OpenAI": ("Microsoft & Low-code", r"azure (?:ai|openai|cognitive|machine learning)|ai foundry"),
+    "SharePoint / M365": ("Microsoft & Low-code", r"sharepoint|microsoft 365(?! copilot)|office 365|\bm365\b(?! copilot)|microsoft graph"),
+    "Dynamics 365": ("Microsoft & Low-code", r"dynamics 365|\bd365\b|dynamics crm"),
     "English": ("Languages (spoken)", r"english|ingilizce"),
 }
 SKILL_RE = {k: re.compile(v[1], re.I) for k, v in SKILLS.items()}
@@ -350,9 +365,10 @@ def write_jobs_sheet(ws, rows):
             row[open_].fill = PatternFill("solid", fgColor="E3F4E8")
     n = ws.max_row
     sc = ws.cell(row=1, column=score + 1).column_letter
-    ws.conditional_formatting.add(f"{sc}2:{sc}{n}", ColorScaleRule(
-        start_type="num", start_value=30, start_color="F8696B", mid_type="num", mid_value=55,
-        mid_color="FFEB84", end_type="num", end_value=80, end_color="63BE7B"))
+    if n > 1:  # a day with no new jobs has only the header; M2:M1 would crash openpyxl
+        ws.conditional_formatting.add(f"{sc}2:{sc}{n}", ColorScaleRule(
+            start_type="num", start_value=30, start_color="F8696B", mid_type="num", mid_value=55,
+            mid_color="FFEB84", end_type="num", end_value=80, end_color="63BE7B"))
     ws.auto_filter.ref = f"A1:{ws.cell(row=1, column=len(JOB_COLS)).column_letter}{n}"
 
 
@@ -447,6 +463,8 @@ def load_master_rows(path):
 
 
 def main():
+    # from the script folder, since Task Scheduler's working directory varies; existing env vars win
+    load_dotenv(os.path.join(HERE, ".env"))
     cfg = json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8"))
     token = os.environ.get("APIFY_TOKEN")
     if not token:
@@ -505,6 +523,8 @@ def main():
     if build_workbook(master, old + rows, cfg, f"last {cfg['master_window_days']} days"):
         for p in side:  # their rows are now in the master
             os.remove(p)
+    # alongside Excel, never instead of it: safe_load logs and returns False on any DB problem
+    jobdb.safe_load(old + rows, today, {k: v[0] for k, v in SKILLS.items()}, set(cfg["cv_skills"]), log)
     log(f"Saved {daily} and updated master ({len(old) + len(rows)} jobs).")
 
 

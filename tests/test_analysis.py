@@ -1,33 +1,45 @@
 """Tests for the pure analysis functions in job_searcher.py (no network, no Excel files)."""
-import json
-import os
-import sys
-
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
-import job_searcher as js  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def cfg():
-    with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
-        return json.load(f)
-
-
-def make_job(**kw):
-    job = {"id": "1", "title": "Junior Python Developer", "companyName": "Acme",
-           "location": "Istanbul, Türkiye", "descriptionText": "Python and SQL.",
-           "seniorityLevel": "Entry level"}
-    job.update(kw)
-    return job
+import job_searcher as js
+from conftest import make_job  # cfg fixture and import path also come from conftest.py
 
 
 # ---------- config consistency ----------
 def test_every_cv_skill_is_a_known_skill(cfg):
     # a typo in cv_skills would silently never match anything
     assert set(cfg["cv_skills"]) <= set(js.SKILLS)
+
+
+# ---------- Microsoft skill patterns ----------
+def found(text: str) -> set[str]:
+    return {s for s, rx in js.SKILL_RE.items() if rx.search(text)}
+
+
+@pytest.mark.parametrize("text, skill", [
+    ("Build agents in Copilot Studio", "Copilot Studio"),
+    ("Experience with Power Virtual Agents", "Copilot Studio"),
+    ("Roll out Microsoft 365 Copilot to users", "Microsoft 365 Copilot"),
+    ("M365 Copilot adoption", "Microsoft 365 Copilot"),
+    ("Daily use of GitHub Copilot", "GitHub Copilot"),
+    ("Canvas apps in PowerApps", "Power Apps"),
+    ("Automate flows with Power Automate", "Power Automate"),
+    ("Power Platform and Dataverse", "Power Platform"),
+    ("Azure OpenAI and Azure AI Foundry", "Azure AI / OpenAI"),
+    ("SharePoint Online and Office 365", "SharePoint / M365"),
+    ("Dynamics 365 CRM customisation", "Dynamics 365"),
+])
+def test_microsoft_skills_are_detected(text, skill):
+    assert skill in found(text)
+
+
+@pytest.mark.parametrize("text, absent", [
+    ("Daily use of GitHub Copilot", "Microsoft 365 Copilot"),  # different products
+    ("Microsoft Teams copilot integration", "Microsoft 365 Copilot"),  # "...ms copilot" inside "teams"
+    ("Roll out Microsoft 365 Copilot", "SharePoint / M365"),  # Copilot isn't SharePoint/M365 admin
+])
+def test_microsoft_skills_dont_overlap(text, absent):
+    assert absent not in found(text)
 
 
 # ---------- years_required ----------
@@ -119,3 +131,11 @@ def test_years_required_lowers_score(cfg):
 def test_score_is_clamped(cfg):
     job = make_job(location="Nowhere, Mars", descriptionText="10 years. Must be a U.S. citizen.")
     assert 0 <= js.analyse(job, cfg)["score"] <= 100
+
+
+# ---------- Excel output ----------
+def test_workbook_with_no_new_jobs_is_written(cfg, tmp_path):
+    # a quiet day: postings came back but none were new, so only the header row exists
+    path = str(tmp_path / "jobs_2026-10-02.xlsx")
+    assert js.build_workbook(path, [], cfg, "2026-10-02 only")
+    assert js.load_master_rows(path) == []
