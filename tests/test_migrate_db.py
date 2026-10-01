@@ -97,10 +97,12 @@ def test_duplicate_table_on_fresh_db_is_marked_fresh(legacy, tmp_path):
 
 def test_real_migrations_build_an_empty_schema(empty):
     # the real db/migrations directory, so a broken or misnamed migration fails here and in CI
-    assert [m.version for m in migrate.apply(empty, migrate.DEFAULT_DIR)][0] == "001"
+    every = [m.version for m in migrate.discover(migrate.DEFAULT_DIR)]
+    assert every[:2] == ["001", "002"]
+    assert [m.version for m in migrate.apply(empty, migrate.DEFAULT_DIR)] == every
     for t in ("jobs", "skills", "job_skills", "runs"):
         assert table_exists(empty, t)
-    assert recorded(empty)[0] == ("001", "initial")
+    assert recorded(empty)[:2] == [("001", "initial"), ("002", "api_reader_role")]
 
 
 def test_baseline_records_001_without_running_it(legacy, tmp_path):
@@ -132,3 +134,46 @@ def test_refuses_inside_open_transaction(empty, tmp_path):
             func(empty, d)
     empty.rollback()
     assert not table_exists(empty, "schema_migrations") and not table_exists(empty, "a")
+
+
+# --- 002: the API's SELECT-only role (the pg fixture has already applied it to its schema) ---
+
+API_ROLE = "jobpilot_api"
+API_TABLES = ("jobs", "skills", "job_skills", "runs")
+
+
+def can(conn, table: str, privilege: str) -> bool:
+    # schema-qualified, so the answer is about this test's schema, not public's tables of the same name
+    return one(conn, "SELECT has_table_privilege(%s, quote_ident(current_schema()) || '.' || %s, %s)",
+               (API_ROLE, table, privilege))[0]
+
+
+def test_api_role_exists_without_login_and_with_connection_limit(pg):
+    assert one(pg, "SELECT rolcanlogin, rolconnlimit, rolsuper FROM pg_roles WHERE rolname = %s",
+               (API_ROLE,)) == (False, 5, False)
+
+
+def test_api_role_can_only_select_the_four_tables(pg):
+    assert one(pg, "SELECT has_schema_privilege(%s, current_schema(), 'USAGE')", (API_ROLE,))[0]
+    for t in API_TABLES:
+        assert can(pg, t, "SELECT"), t
+        for p in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+            assert not can(pg, t, p), (t, p)
+
+
+def test_api_role_has_no_privilege_on_schema_migrations(pg):
+    for p in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        assert not can(pg, "schema_migrations", p), p
+
+
+def test_api_role_defaults_to_read_only_transactions(pg):
+    config = one(pg, "SELECT rolconfig FROM pg_roles WHERE rolname = %s", (API_ROLE,))[0]
+    assert "default_transaction_read_only=on" in config
+
+
+def test_002_reapplies_cleanly_when_role_already_exists(empty):
+    # the role is cluster-wide and already exists (the pg fixture created it), as on a second database
+    assert one(empty, "SELECT count(*) FROM pg_roles WHERE rolname = %s", (API_ROLE,))[0] == 1
+    migrate.apply(empty, migrate.DEFAULT_DIR)
+    assert ("002", "api_reader_role") in recorded(empty)
+    assert all(can(empty, t, "SELECT") for t in API_TABLES)  # granted in this new schema too
