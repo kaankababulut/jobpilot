@@ -76,7 +76,7 @@ def db_unavailable(request: Request, exc: psycopg.OperationalError) -> JSONRespo
     return JSONResponse(status_code=503, content={"detail": "database unavailable"})
 
 
-@app.get("/health", summary="Check that the API is up and whether it can reach the database",
+@app.get("/health", operation_id="health", summary="Check that the API is up and whether it can reach the database",
          description="Needs no API key and returns no job data. Always 200 while the API process runs, "
                      "so it works as a liveness check; `db` is \"ok\", \"down\" or \"not configured\".")
 def health() -> dict:
@@ -208,3 +208,62 @@ def get_job(job_id: Annotated[int, Path(ge=1, le=2**63 - 1, description="Job id 
     if job is None:
         raise HTTPException(404, "job not found")
     return JobDetail(**job)
+
+
+# ---------- skills and runs ----------
+class SkillDemand(BaseModel):
+    name: str
+    category: str
+    on_cv: bool = Field(description="True if the owner already has this skill; "
+                                    "false with a high share is a skill gap.")
+    jobs: int = Field(description="Number of jobs first seen in the window that ask for this skill.")
+    share: float = Field(description="Fraction (0-1) of all jobs first seen in the window that ask for this skill.")
+
+
+class SkillDemandList(BaseModel):
+    items: list[SkillDemand]
+    days: int = Field(description="The window: jobs first seen in the last this many days.")
+
+
+class RunInfo(BaseModel):
+    id: int
+    kind: str = Field(description="daily (the 12:00 scheduled run) or backfill (old Excel files loaded by hand).")
+    run_date: dt.date = Field(description="The date of the data that was loaded.")
+    loaded_at: dt.datetime = Field(description="When the load finished writing to the database.")
+    rows_offered: int = Field(description="Job rows the load was given.")
+    rows_written: int = Field(description="Jobs inserted or updated; older data than what's stored is skipped.")
+
+
+class RunList(BaseModel):
+    items: list[RunInfo]
+
+
+@app.get("/skills", response_model=SkillDemandList, operation_id="top_skills", dependencies=[Depends(require_key)],
+         summary="Most-demanded skills among recently found jobs, and which the owner lacks",
+         description="Counts the skills asked for by jobs first seen in the last `days` days, most-demanded first. "
+                     "Filter on_cv=false entries with a high share to find skill gaps. Skills are detected when a "
+                     "job is scraped, so a newly tracked skill only shows for jobs fetched after it was added.")
+def top_skills(
+    conn=Depends(get_conn),
+    days: Annotated[int, Query(
+        ge=1, le=365, description="Window size: jobs first seen in the last this many days (1-365).")] = 30,
+    # categories listed by hand (from SKILLS in job_searcher.py) so the API needn't import the pipeline;
+    # a stale list only makes the hint incomplete, the filter itself accepts any text
+    category: Annotated[str | None, Query(
+        min_length=1, max_length=40,
+        description="Only skills in this category (exact match). Current categories: AI/ML, Backend, "
+                    "Cloud & DevOps, Data, Frontend & Mobile, Languages, Languages (spoken), "
+                    "Microsoft & Low-code, Tools & Practices.")] = None,
+    limit: Annotated[int, Query(ge=1, le=100, description="How many skills to return (1-100).")] = 20,
+) -> SkillDemandList:
+    return SkillDemandList(items=queries.top_skills(conn, days=days, category=category, limit=limit), days=days)
+
+
+@app.get("/runs", response_model=RunList, operation_id="recent_runs", dependencies=[Depends(require_key)],
+         summary="Latest database loads, newest first",
+         description="One entry per load into the database. Use it to check whether today's daily load "
+                     "landed: the newest daily entry should have today's run_date.")
+def recent_runs(conn=Depends(get_conn),
+                limit: Annotated[int, Query(ge=1, le=50, description="How many loads to return (1-50).")] = 10,
+                ) -> RunList:
+    return RunList(items=queries.recent_runs(conn, limit=limit))
