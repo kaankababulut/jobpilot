@@ -37,3 +37,13 @@ def test_connect_sets_timeouts(monkeypatch):
     db.connect("postgresql://example")
     assert seen["connect_timeout"] == 5
     assert "statement_timeout=30000" in seen["options"]
+    assert "read_only" not in seen["options"]  # the loader must stay able to write
+
+
+def test_connect_read_only_adds_server_setting(monkeypatch):
+    seen = {}
+    fake = types.SimpleNamespace(connect=lambda url, **kw: seen.update(url=url, **kw))
+    monkeypatch.setitem(sys.modules, "psycopg", fake)
+    db.connect("postgresql://example", read_only=True)
+    assert "default_transaction_read_only=on" in seen["options"]
+    assert "statement_timeout=30000" in seen["options"]  # timeouts still apply
