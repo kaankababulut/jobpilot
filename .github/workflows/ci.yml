@@ -1,0 +1,53 @@
+name: CI
+
+# push on main + every pull_request: a PR branch runs once per push (as the PR), not twice.
+# Branches without a PR don't run, which saves minutes on this private repo.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# a newer push to the same branch/PR cancels the run it makes obsolete
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      db:
+        image: pgvector/pgvector:pg17   # same image as docker-compose.yml
+        env:
+          # throwaway password: this container lives for one job and is never reachable from outside, so no secrets in CI
+          POSTGRES_USER: jobs
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: jobs
+        ports:
+          - 5432:5432
+        # the job waits until Postgres accepts connections before running any step
+        options: >-
+          --health-cmd "pg_isready -U jobs -d jobs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip   # keyed on requirements.txt, so unchanged deps download from cache
+      - run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m pytest -q
+      - name: Database tests
+        # the pg fixture builds a throwaway schema from db/init/001_schema.sql;
+        # JOBPILOT_REQUIRE_DB=1 makes it fail instead of skip if this database is unreachable
+        env:
+          DATABASE_URL: postgresql://jobs:ci@127.0.0.1:5432/jobs
+          JOBPILOT_REQUIRE_DB: "1"
+        run: python -m pytest -q -m db
