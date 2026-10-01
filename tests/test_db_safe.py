@@ -94,6 +94,14 @@ def test_import_job_searcher_without_psycopg(monkeypatch):
     importlib.import_module("jobpilot.db")
 
 
+def test_import_job_searcher_without_dotenv(monkeypatch):
+    # the scheduler's Python may lack python-dotenv; the Excel run must still start
+    monkeypatch.delitem(sys.modules, "job_searcher", raising=False)
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+    js = importlib.import_module("job_searcher")
+    assert js.load_dotenv("unused.env") is False  # the no-op fallback
+
+
 def raising_log(msg):
     raise OSError("run.log is locked")
 

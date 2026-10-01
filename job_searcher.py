@@ -11,6 +11,11 @@ from collections import Counter
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
+from jobpilot import db as jobdb
+try:
+    from dotenv import load_dotenv
+except ImportError:  # optional: a missing package must not stop the Excel run
+    def load_dotenv(*args, **kwargs): return False
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ACTOR = "curious_coder~linkedin-jobs-scraper"
@@ -447,6 +452,8 @@ def load_master_rows(path):
 
 
 def main():
+    # from the script folder, since Task Scheduler's working directory varies; existing env vars win
+    load_dotenv(os.path.join(HERE, ".env"))
     cfg = json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8"))
     token = os.environ.get("APIFY_TOKEN")
     if not token:
@@ -505,6 +512,8 @@ def main():
     if build_workbook(master, old + rows, cfg, f"last {cfg['master_window_days']} days"):
         for p in side:  # their rows are now in the master
             os.remove(p)
+    # alongside Excel, never instead of it: safe_load logs and returns False on any DB problem
+    jobdb.safe_load(old + rows, today, {k: v[0] for k, v in SKILLS.items()}, set(cfg["cv_skills"]), log)
     log(f"Saved {daily} and updated master ({len(old) + len(rows)} jobs).")
 
 
