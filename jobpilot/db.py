@@ -93,6 +93,23 @@ def record_run(conn, kind: str, run_date, offered: int, written: int) -> None:
                     (kind, run_date, offered, written))
 
 
+def redact(e: Exception, url: str) -> str:
+    """One-line `Type: message` for an error, with the URL and its password hidden."""
+    msg = (str(e).splitlines() or [""])[0]
+    if not url:  # "".replace inserts the marker between every character
+        return f"{type(e).__name__}: {msg}"
+    msg = msg.replace(url, "<DATABASE_URL>")
+    try:
+        password = urlsplit(url).password
+    except ValueError:  # malformed URL; the full-URL replace above still applies
+        password = None
+    if password:  # driver messages can echo connection details; never let the password reach the log
+        # the driver may show it %-decoded (p%40ss -> p@ss), so hide both forms
+        for form in {password, unquote(password)}:
+            msg = msg.replace(form, "***")
+    return f"{type(e).__name__}: {msg}"
+
+
 def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills: set[str],
               log: Callable[[str], None]) -> bool:
     """Loads rows into Postgres in one transaction; logs and returns False instead of raising,
@@ -118,16 +135,7 @@ def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills:
             written = upsert_jobs(conn, prepare(rows, log), categories, cv_skills)
             record_run(conn, "daily", run_date, len(rows), written)
     except Exception as e:  # not BaseException, so Ctrl+C still stops the run
-        msg = (str(e).splitlines() or [""])[0].replace(url, "<DATABASE_URL>")
-        try:
-            password = urlsplit(url).password
-        except ValueError:  # malformed URL; the full-URL replace above still applies
-            password = None
-        if password:  # driver messages can echo connection details; never let the password reach the log
-            # the driver may show it %-decoded (p%40ss -> p@ss), so hide both forms
-            for form in {password, unquote(password)}:
-                msg = msg.replace(form, "***")
-        say(f"WARNING: Postgres load skipped: {type(e).__name__}: {msg}")
+        say(f"WARNING: Postgres load skipped: {redact(e, url)}")
         return False
     say(f"Postgres: wrote {written} of {len(rows)} jobs")
     return True
