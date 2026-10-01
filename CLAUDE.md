@@ -5,10 +5,11 @@ A personal job-market platform. It collects internship and entry-level tech jobs
 The owner directs the work and reviews it; AI agents write most of the code. Explain design decisions in plain words, because the owner must be able to defend them in interviews.
 
 ## Current state
-- `job_searcher.py`: the whole pipeline in one file. It fetches from LinkedIn (via Apify) and Himalayas, then filters, scores and writes Excel files to `output/`.
-- `config.json`: search titles, regions, filters and the CV skill list.
-- `tests/`: pytest suite for the pure analysis functions.
-- `docker-compose.yml` + `db/init/`: local PostgreSQL (with pgvector). The pipeline doesn't write to it yet.
+- `job_searcher.py`: the entry point. It fetches from LinkedIn (via Apify) and Himalayas, then filters, scores, writes Excel files to `output/` and loads the 30-day window into Postgres via `jobpilot.db.safe_load` (never breaks the run).
+- `jobpilot/`: `records.py` (Excel row → DB record, pure), `db.py` (idempotent upserts, `safe_load`), `backfill.py` (`python -m jobpilot.backfill` loads existing Excel files).
+- `config.json`: search titles, regions, filters and the CV skill list (`cv_skills` = skills the owner already has).
+- `tests/`: pytest suite (analysis, record mapping, loader). DB tests are opt-in: `python -m pytest -q -m db` (needs the container; uses a throwaway schema).
+- `docker-compose.yml` + `db/init/`: local PostgreSQL (with pgvector). Tables: jobs, skills, job_skills, runs. Init scripts only run on an empty volume, so the next schema change needs a migration.
 
 ## Hard rules
 - **Never run `job_searcher.py` or `run_now.cmd`.** Each run costs about $0.45 of Apify credit. Ask the owner first.
@@ -37,8 +38,8 @@ Keep each change small enough to review in 5 minutes.
 Match `job_searcher.py`: compact, plain Python, few dependencies, short comments that explain *why*. Type hints on new functions. New Python dependencies go in `requirements.txt`.
 
 ## Roadmap
-1. Git, agents, tests, Docker Postgres ← current
-2. Load jobs into Postgres (idempotent upserts), Excel kept as an export
+1. Git, agents, tests, Docker Postgres
+2. Load jobs into Postgres (idempotent upserts), Excel kept as an export ← current
 3. FastAPI endpoints + GitHub Actions CI
 4. Embeddings with pgvector, semantic job search
 5. LLM matching agent (tool use) + MCP server over the job database
