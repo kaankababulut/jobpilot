@@ -15,9 +15,11 @@ RUN = {"id": 3, "kind": "daily", "run_date": dt.date(2026, 10, 1),
 
 
 @pytest.fixture(autouse=True)
-def env(monkeypatch):
+def env(monkeypatch, request):
     # importing jobpilot.api loads the real .env; tests use their own key and never the real URL
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    # db tests keep it: the pg fixture needs the URL, and in CI there is no .env to reload it from
+    if request.node.get_closest_marker("db") is None:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("JOBPILOT_API_KEY", KEY)
 
 

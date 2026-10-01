@@ -18,9 +18,11 @@ KEY = "test-key-123"
 
 
 @pytest.fixture(autouse=True)
-def clean_env(monkeypatch):
+def clean_env(monkeypatch, request):
     # importing jobpilot.api loads the real .env; start every test without its values
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    # db tests keep it: the pg fixture needs the URL, and in CI there is no .env to reload it from
+    if request.node.get_closest_marker("db") is None:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("JOBPILOT_API_KEY", raising=False)
 
 
