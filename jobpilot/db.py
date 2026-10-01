@@ -2,7 +2,10 @@
 Doesn't import job_searcher; the caller passes SKILLS categories and cv_skills in.
 Transactions are the caller's job: `with connect(url) as conn:` commits when the block
 succeeds and rolls back on any error, so a failed load never leaves half a batch behind."""
+import datetime as dt
+import os
 from typing import Callable
+from urllib.parse import unquote, urlsplit
 
 from jobpilot.records import row_to_record
 
@@ -28,7 +31,7 @@ FIRST_SEEN_SQL = "UPDATE jobs SET first_seen = LEAST(first_seen, %s) WHERE sourc
 
 def connect(url: str):
     import psycopg  # lazy, so a missing driver can't break `import job_searcher`
-    # timeouts so a stopped container or a stuck lock fails fast instead of hanging the 09:00 run
+    # timeouts so a stopped container or a stuck lock fails fast instead of hanging the 12:00 run
     return psycopg.connect(url, connect_timeout=5, options="-c statement_timeout=30000")
 
 
@@ -88,3 +91,43 @@ def record_run(conn, kind: str, run_date, offered: int, written: int) -> None:
     with conn.cursor() as cur:
         cur.execute("INSERT INTO runs (kind, run_date, rows_offered, rows_written) VALUES (%s, %s, %s, %s)",
                     (kind, run_date, offered, written))
+
+
+def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills: set[str],
+              log: Callable[[str], None]) -> bool:
+    """Loads rows into Postgres in one transaction; logs and returns False instead of raising,
+    so a database problem can never break the Excel run."""
+    def say(msg: str) -> None:
+        # the log writes to the console and logs/run.log, which can fail (locked file, non-UTF-8
+        # console); a failed log line must not break the Excel run either
+        try:
+            log(msg)
+        except Exception:
+            pass
+
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        say("Postgres load skipped: DATABASE_URL not set")
+        return False
+    # try sits outside the with: if the except were inside, the with-block would exit cleanly
+    # and psycopg would commit a partial batch instead of rolling it back
+    try:
+        if isinstance(run_date, str):
+            run_date = dt.date.fromisoformat(run_date)  # runs.run_date is a DATE column
+        with connect(url) as conn:
+            written = upsert_jobs(conn, prepare(rows, log), categories, cv_skills)
+            record_run(conn, "daily", run_date, len(rows), written)
+    except Exception as e:  # not BaseException, so Ctrl+C still stops the run
+        msg = (str(e).splitlines() or [""])[0].replace(url, "<DATABASE_URL>")
+        try:
+            password = urlsplit(url).password
+        except ValueError:  # malformed URL; the full-URL replace above still applies
+            password = None
+        if password:  # driver messages can echo connection details; never let the password reach the log
+            # the driver may show it %-decoded (p%40ss -> p@ss), so hide both forms
+            for form in {password, unquote(password)}:
+                msg = msg.replace(form, "***")
+        say(f"WARNING: Postgres load skipped: {type(e).__name__}: {msg}")
+        return False
+    say(f"Postgres: wrote {written} of {len(rows)} jobs")
+    return True
