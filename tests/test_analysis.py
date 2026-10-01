@@ -11,6 +11,37 @@ def test_every_cv_skill_is_a_known_skill(cfg):
     assert set(cfg["cv_skills"]) <= set(js.SKILLS)
 
 
+# ---------- Microsoft skill patterns ----------
+def found(text: str) -> set[str]:
+    return {s for s, rx in js.SKILL_RE.items() if rx.search(text)}
+
+
+@pytest.mark.parametrize("text, skill", [
+    ("Build agents in Copilot Studio", "Copilot Studio"),
+    ("Experience with Power Virtual Agents", "Copilot Studio"),
+    ("Roll out Microsoft 365 Copilot to users", "Microsoft 365 Copilot"),
+    ("M365 Copilot adoption", "Microsoft 365 Copilot"),
+    ("Daily use of GitHub Copilot", "GitHub Copilot"),
+    ("Canvas apps in PowerApps", "Power Apps"),
+    ("Automate flows with Power Automate", "Power Automate"),
+    ("Power Platform and Dataverse", "Power Platform"),
+    ("Azure OpenAI and Azure AI Foundry", "Azure AI / OpenAI"),
+    ("SharePoint Online and Office 365", "SharePoint / M365"),
+    ("Dynamics 365 CRM customisation", "Dynamics 365"),
+])
+def test_microsoft_skills_are_detected(text, skill):
+    assert skill in found(text)
+
+
+@pytest.mark.parametrize("text, absent", [
+    ("Daily use of GitHub Copilot", "Microsoft 365 Copilot"),  # different products
+    ("Microsoft Teams copilot integration", "Microsoft 365 Copilot"),  # "...ms copilot" inside "teams"
+    ("Roll out Microsoft 365 Copilot", "SharePoint / M365"),  # Copilot isn't SharePoint/M365 admin
+])
+def test_microsoft_skills_dont_overlap(text, absent):
+    assert absent not in found(text)
+
+
 # ---------- years_required ----------
 @pytest.mark.parametrize("text, expected", [
     ("Requires 3+ years of experience", 3),
