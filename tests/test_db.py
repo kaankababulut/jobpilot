@@ -103,3 +103,45 @@ def test_read_only_connection_rejects_writes(pg):
         ro.rollback()
         with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
             ro.execute("CREATE TEMP TABLE t (x int)")  # even a temp table, so nothing real is at risk
+
+
+def skills_of(conn) -> dict[str, list[str]]:
+    rows = conn.execute("SELECT j.source_id, s.name FROM job_skills js JOIN jobs j ON j.id = js.job_id "
+                        "JOIN skills s USING (skill_id) ORDER BY 1, 2").fetchall()
+    out: dict[str, list[str]] = {}
+    for sid, name in rows:
+        out.setdefault(sid, []).append(name)
+    return out
+
+
+def test_mixed_batch_matches_per_record_semantics(pg):
+    # stored: job 1 and 2 on 09-29; the batch has a new job 3, a newer job 1 and an older job 2,
+    # interleaved so a misaligned record -> id mapping would put skills or scores on the wrong job
+    load(pg, [rec(**{"Job ID": "1", "Match Score (/100)": 50}), rec(**{"Job ID": "2", "Match Score (/100)": 60})])
+    batch = [rec(**{"Job ID": "2", "Run Date": "2026-09-20", "Match Score (/100)": 10, "Skills To Learn": "Kubernetes"}),
+             rec(**{"Job ID": "3", "Match Score (/100)": 30, "Skills You Have": "SQL", "Skills To Learn": ""}),
+             rec(**{"Job ID": "1", "Run Date": "2026-09-30", "Match Score (/100)": 90, "Skills To Learn": "Azure"})]
+    assert load(pg, batch) == 2  # the older job 2 doesn't count
+    rows = pg.execute("SELECT source_id, match_score, first_seen, last_seen FROM jobs ORDER BY 1").fetchall()
+    d = dt.date
+    assert rows == [("1", 90, d(2026, 9, 29), d(2026, 9, 30)),
+                    ("2", 60, d(2026, 9, 20), d(2026, 9, 29)),  # kept its values, first_seen moved earlier
+                    ("3", 30, d(2026, 9, 29), d(2026, 9, 29))]
+    assert skills_of(pg) == {"1": ["Azure", "Python", "SQL"], "2": ["Docker", "Python", "SQL"], "3": ["SQL"]}
+
+
+def test_large_batch_loads_every_job(pg):
+    batch = [rec(**{"Job ID": str(i), "Match Score (/100)": i % 100,
+                    "Skills To Learn": "Docker" if i % 2 else ""}) for i in range(1, 501)]
+    assert load(pg, batch) == 500
+    assert one(pg, "SELECT count(*), sum(match_score) FROM jobs") == (500, sum(i % 100 for i in range(1, 501)))
+    assert one(pg, "SELECT count(*) FROM job_skills")[0] == 500 * 2 + 250  # Python, SQL each; Docker on odd ids
+    assert one(pg, "SELECT match_score FROM jobs WHERE source_id = '437'")[0] == 37  # ids line up with records
+    assert load(pg, batch) == 500  # and re-running it is still idempotent
+    assert one(pg, "SELECT count(*) FROM job_skills")[0] == 1250
+
+
+def test_empty_batch_writes_nothing(pg):
+    assert load(pg, []) == 0
+    for table in ("jobs", "job_skills", "skills"):
+        assert one(pg, f"SELECT count(*) FROM {table}")[0] == 0, table

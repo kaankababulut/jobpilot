@@ -71,22 +71,32 @@ def upsert_jobs(conn, records: list[dict], categories: dict[str, str], cv_skills
                 [(n, categories.get(n, "Unknown"), n in cv_skills) for n in names])
             cur.execute("SELECT name, skill_id FROM skills WHERE name = ANY(%s)", (names,))
             skill_ids = dict(cur.fetchall())
-        written = 0
-        for rec in records:
-            cur.execute(UPSERT_SQL, rec)
-            row = cur.fetchone()
-            if row is None:
-                # update skipped (stored data is newer); first_seen may still need to move earlier.
-                # Not needed on the write path: there first_seen <= last_seen <= run_date already.
-                cur.execute(FIRST_SEEN_SQL, (rec["run_date"], rec["source"], rec["source_id"]))
-                continue
-            job_id = row[0]
+        if not records:
+            return 0
+        # one statement per record, but executemany pipelines them: all are sent, then one sync,
+        # so a remote database costs a few round trips per batch instead of several per record.
+        # Statements still run one after another in order, so the per-record semantics are unchanged.
+        cur.executemany(UPSERT_SQL, records, returning=True)
+        # exactly one result per record, in order: an id, or no row when the update was skipped
+        ids = [c.fetchone() for c in cur.results()]
+        if len(ids) != len(records):  # a misaligned zip would attach skills to the wrong job
+            raise RuntimeError(f"expected {len(records)} upsert results, got {len(ids)}")
+        skipped = [r for r, row in zip(records, ids) if row is None]
+        # job_id -> the last record that wrote it (a later write wins, as it did row by row)
+        latest = {row[0]: r for r, row in zip(records, ids) if row is not None}
+        if skipped:
+            # update skipped (stored data is newer); first_seen may still need to move earlier.
+            # Not needed on the write path: there first_seen <= last_seen <= run_date already.
+            cur.executemany(FIRST_SEEN_SQL, [(r["run_date"], r["source"], r["source_id"]) for r in skipped])
+        if latest:
             # replace rather than merge, so a skill dropped from the posting disappears
-            cur.execute("DELETE FROM job_skills WHERE job_id = %s", (job_id,))
-            if rec["skills"]:
-                cur.executemany("INSERT INTO job_skills (job_id, skill_id) VALUES (%s, %s)",
-                                [(job_id, skill_ids[s]) for s in rec["skills"]])
-            written += 1
+            cur.execute("DELETE FROM job_skills WHERE job_id = ANY(%s)", (list(latest),))
+            pairs = [(job_id, skill_ids[s]) for job_id, r in latest.items() for s in r["skills"]]
+            if pairs:  # one INSERT for every pair: two arrays unnested side by side into rows
+                cur.execute("INSERT INTO job_skills (job_id, skill_id) "
+                            "SELECT * FROM unnest(%s::bigint[], %s::int[])",
+                            ([p[0] for p in pairs], [p[1] for p in pairs]))
+        written = len(ids) - len(skipped)
     return written
 
 
