@@ -6,7 +6,7 @@ Writes:
                                              (point your Copilot agent at this file)
 Needs the APIFY_TOKEN environment variable.
 """
-import glob, json, os, re, sys, time, datetime as dt, urllib.request, urllib.parse, urllib.error, traceback
+import glob, json, os, re, socket, ssl, sys, time, datetime as dt, urllib.request, urllib.parse, urllib.error, traceback
 from collections import Counter
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -19,6 +19,11 @@ except ImportError:  # optional: a missing package must not stop the Excel run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ACTOR = "curious_coder~linkedin-jobs-scraper"
+# when every source fails with a network error (e.g. Wi-Fi "connected" but not passing traffic right
+# after the PC wakes), the whole fetch round is retried; tests set these to 0/small values
+FETCH_ATTEMPTS, FETCH_RETRY_WAIT = 3, 120
+# not plain OSError: that would also count e.g. a locked file as "network down"
+NETWORK_ERRORS = (urllib.error.URLError, ConnectionError, TimeoutError, socket.gaierror, ssl.SSLError)
 
 # canonical skill -> (category, regex). Names must match cv_skills in config.json.
 SKILLS = {
@@ -470,6 +475,57 @@ def load_databases(rows: list[dict], today: str, cfg: dict) -> None:
     jobdb.safe_load(rows, today, categories, cv, log, url_var="AZURE_DATABASE_URL", label="Azure Postgres")
 
 
+def is_network_error(e: Exception) -> bool:
+    # an HTTPError means the server answered (e.g. 401 bad token), so retrying won't help
+    return isinstance(e, NETWORK_ERRORS) and not isinstance(e, urllib.error.HTTPError)
+
+
+def fetch_round(sources: list, seen: set, cfg: dict) -> tuple[list, int, bool]:
+    """One pass over every source. Returns (jobs, n_raw, network_down); network_down is True only
+    when every source raised a network error (not an HTTP error, not 0 postings)."""
+    jobs, n_raw, net_fails = [], 0, 0
+    for name, remote_only, fetch in sources:
+        log(f"Searching {name}{' (remote only)' if remote_only else ''}...")
+        try:
+            raw = fetch()
+        except Exception as e:  # one failing source shouldn't lose the others
+            log(f"WARNING: {name} search failed: {e}")
+            net_fails += is_network_error(e)
+            continue
+        n_raw += len(raw)
+        kept = mills = not_remote = 0
+        for j in raw:
+            if not j.get("id") or str(j["id"]) in seen or not relevant(j, cfg):
+                continue
+            j["_region"], j["_region_remote"] = name, remote_only
+            if cfg.get("drop_internship_mills", True) and is_mill(red_flags(j.get("descriptionText") or "")):
+                mills += 1; continue
+            # LinkedIn's remote filter is only a hint in AI search, so enforce it here
+            if remote_only and not work_type(j).startswith("Remote"):
+                not_remote += 1; continue
+            seen.add(str(j["id"])); jobs.append(j); kept += 1
+        log(f"  {name}: {len(raw)} postings, {kept} kept "
+            f"({mills} internship mills and {not_remote} non-remote dropped)")
+    return jobs, n_raw, bool(sources) and net_fails == len(sources)
+
+
+def fetch_all(sources: list, seen: set, cfg: dict) -> tuple[list, int]:
+    """Fetches every source, retrying the whole round while the network is down (e.g. Wi-Fi not
+    ready yet right after the PC wakes). Exits 1 if nothing came back, keeping the previous files."""
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        # a retry only happens when ALL sources failed, so no Apify search that already
+        # succeeded (and cost credit) is ever re-run
+        jobs, n_raw, network_down = fetch_round(sources, seen, cfg)
+        if not network_down or attempt == FETCH_ATTEMPTS:
+            break
+        log(f"WARNING: every source failed with a network error; retrying in {FETCH_RETRY_WAIT}s "
+            f"(attempt {attempt + 1} of {FETCH_ATTEMPTS})")
+        time.sleep(FETCH_RETRY_WAIT)
+    if not n_raw:
+        log("ERROR: no postings returned from any source; keeping previous files."); sys.exit(1)
+    return jobs, n_raw
+
+
 def main():
     # from the script folder, since Task Scheduler's working directory varies; existing env vars win
     load_dotenv(os.path.join(HERE, ".env"))
@@ -494,30 +550,7 @@ def main():
     if cfg.get("himalayas", {}).get("enabled"):
         sources.append(("Remote (Himalayas)", True, lambda: fetch_himalayas(cfg)))
 
-    seen, jobs, n_raw = set(known), [], 0
-    for name, remote_only, fetch in sources:
-        log(f"Searching {name}{' (remote only)' if remote_only else ''}...")
-        try:
-            raw = fetch()
-        except Exception as e:  # one failing source shouldn't lose the others
-            log(f"WARNING: {name} search failed: {e}")
-            continue
-        n_raw += len(raw)
-        kept = mills = not_remote = 0
-        for j in raw:
-            if not j.get("id") or str(j["id"]) in seen or not relevant(j, cfg):
-                continue
-            j["_region"], j["_region_remote"] = name, remote_only
-            if cfg.get("drop_internship_mills", True) and is_mill(red_flags(j.get("descriptionText") or "")):
-                mills += 1; continue
-            # LinkedIn's remote filter is only a hint in AI search, so enforce it here
-            if remote_only and not work_type(j).startswith("Remote"):
-                not_remote += 1; continue
-            seen.add(str(j["id"])); jobs.append(j); kept += 1
-        log(f"  {name}: {len(raw)} postings, {kept} kept "
-            f"({mills} internship mills and {not_remote} non-remote dropped)")
-    if not n_raw:
-        log("ERROR: no postings returned from any source; keeping previous files."); sys.exit(1)
+    jobs, n_raw = fetch_all(sources, set(known), cfg)
     log(f"Total: {n_raw} postings; {len(jobs)} new and relevant after filtering and de-duplication.")
 
     rows = [job_row(today, j, analyse(j, cfg)) for j in jobs]

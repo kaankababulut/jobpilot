@@ -196,6 +196,29 @@ def test_not_allowed_rejection_adds_hint(monkeypatch):
     assert lines[0].endswith("update the database firewall rule")
 
 
+class ConnectionTimeout(Exception):
+    """Same name as psycopg.errors.ConnectionTimeout, which the hint matches on."""
+
+
+@pytest.mark.parametrize("exc", [
+    ConnectionTimeout("connection timeout expired"),  # matched by type name
+    RuntimeError("connection timeout expired\nsecond line"),  # matched by message
+])
+def test_connection_timeout_adds_hint(monkeypatch, exc):
+    # Azure's firewall drops packets silently, so a blocked IP looks like a timeout
+    monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
+
+    def boom(url):
+        raise exc
+    monkeypatch.setattr(db, "connect", boom)
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append, **AZURE) is False
+    assert len(lines) == 1 and "\n" not in lines[0]
+    assert lines[0].startswith(f"WARNING: Azure Postgres load skipped: {type(exc).__name__}:")
+    assert lines[0].endswith("; if your IP changed, update the database firewall rule")
+    assert "Azur3Secret" not in lines[0]
+
+
 def test_named_target_happy_path(monkeypatch):
     monkeypatch.setenv("AZURE_DATABASE_URL", AZURE_URL)
     seen = []
