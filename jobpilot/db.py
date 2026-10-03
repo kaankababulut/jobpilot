@@ -124,8 +124,10 @@ def redact(e: Exception, url: str) -> str:
 
 
 # how a server-side IP allow-list rejection reads: Azure Flexible Server answers
-# 'no pg_hba.conf entry for host "1.2.3.4" ...'; older Azure servers say '... is not allowed to connect'
-FIREWALL_HINTS = ("pg_hba.conf", "not allowed")
+# 'no pg_hba.conf entry for host "1.2.3.4" ...'; older Azure servers say '... is not allowed to connect'.
+# Azure's firewall often drops packets silently instead, which psycopg reports as
+# 'ConnectionTimeout: connection timeout expired' (matched lowercased, type name included)
+FIREWALL_HINTS = ("pg_hba.conf", "not allowed", "connectiontimeout", "timeout expired")
 
 
 def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills: set[str],
