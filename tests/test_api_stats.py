@@ -1,6 +1,7 @@
 """Tests for GET /skills and GET /runs in jobpilot.api, plus checks over the whole OpenAPI spec.
 The default tests fake the queries and the connection; the db-marked ones use the pg fixture."""
 import datetime as dt
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -99,6 +100,27 @@ def test_openapi_covers_every_endpoint():
             assert op["security"] == [{"APIKeyHeader": []}], path
     share = spec["components"]["schemas"]["SkillDemand"]["properties"]["share"]
     assert "0-1" in share["description"]
+
+
+def test_openapi_snapshot_is_current():
+    # compared as parsed JSON, so a CRLF checkout on Windows doesn't fail it
+    with open(api.SPEC_FILE, encoding="utf-8") as f:
+        saved = json.load(f)
+    assert saved == json.loads(api.spec_json()), (
+        "the API contract changed: if that's intended, run `python -m jobpilot.api --write` and commit docs/openapi.json")
+
+
+def test_openapi_snapshot_ignores_docs_switch(monkeypatch):
+    monkeypatch.setenv("JOBPILOT_DOCS", "0")  # the deployed setting must not empty the snapshot
+    assert set(json.loads(api.spec_json())["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs"}
+
+
+def test_write_spec_is_utf8_with_trailing_newline(tmp_path):
+    path = tmp_path / "openapi.json"
+    api.write_spec(str(path))
+    raw = path.read_bytes()
+    assert raw.endswith(b"}\n") and b"\r\n" not in raw  # not UTF-16, not CRLF
+    assert raw.decode("utf-8") == api.spec_json()
 
 
 # ---------- against the real SQL (pytest -m db) ----------

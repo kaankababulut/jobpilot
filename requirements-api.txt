@@ -1,0 +1,8 @@
+# What the API container installs, pinned exactly: the image must be the same build every time,
+# and requirements.txt includes this file, so CI tests exactly these versions.
+# Update deliberately: bump a pin, run the tests, regenerate docs/openapi.json if it changed.
+fastapi==0.142.2
+starlette==1.7.0
+pydantic==2.13.5
+uvicorn==0.54.0
+psycopg[binary]==3.3.6

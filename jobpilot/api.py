@@ -5,9 +5,11 @@ Run locally: uvicorn jobpilot.api:app --host 127.0.0.1 --port 8000
 Endpoints are plain `def`, not async: psycopg calls block, and FastAPI runs sync endpoints in a
 threadpool so one slow query doesn't stall the others. No connection pool yet; one user doesn't need it."""
 import datetime as dt
+import json
 import logging
 import os
 import secrets
+import sys
 from enum import Enum
 from typing import Annotated, Iterator
 
@@ -263,12 +265,14 @@ def recent_runs(conn=Depends(get_conn),
     return RunList(items=queries.recent_runs(conn, limit=limit))
 
 
-def create_app() -> FastAPI:
-    """Builds the app. JOBPILOT_DOCS=0 turns off /docs, /redoc and /openapi.json; anything else keeps them."""
+def create_app(docs: bool | None = None) -> FastAPI:
+    """Builds the app. JOBPILOT_DOCS=0 turns off /docs, /redoc and /openapi.json; anything else keeps them.
+    `docs` overrides the variable (the spec snapshot always builds with docs on)."""
     # the Dockerfile sets JOBPILOT_DOCS=0, so the deployed image is closed even if nobody remembers
     # to set it in Azure (fail closed); a local run leaves it unset and /docs keeps working.
     # app.openapi() still builds the spec in code, so the OpenAPI snapshot works either way
-    docs = os.environ.get("JOBPILOT_DOCS", "").strip() != "0"
+    if docs is None:
+        docs = os.environ.get("JOBPILOT_DOCS", "").strip() != "0"
     # LLM orchestrators (Copilot Studio, Power Automate, agents) pick tools by reading these texts,
     # so they say what the API is for, not just what it is
     app = FastAPI(
@@ -288,3 +292,31 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+# ---------- OpenAPI snapshot ----------
+# docs/openapi.json is the API's contract, kept in git: step 5's Copilot Studio connector imports it,
+# and a test fails when the code's spec drifts from it, so a contract change is always deliberate.
+# FastAPI emits OpenAPI 3.1; Power Platform connectors want 2.0, and converting is step 5's job.
+SPEC_FILE = os.path.join(ROOT, "docs", "openapi.json")
+
+
+def spec_json() -> str:
+    """The OpenAPI spec as stable text: sorted keys, so a diff shows only real changes."""
+    return json.dumps(create_app(docs=True).openapi(), indent=2, sort_keys=True) + "\n"
+
+
+def write_spec(path: str = SPEC_FILE) -> None:
+    # written here rather than with a shell `>`, because PowerShell's `>` writes UTF-16
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(spec_json())
+
+
+if __name__ == "__main__":  # python -m jobpilot.api [--write]
+    if sys.argv[1:] == ["--write"]:
+        write_spec()
+        print(f"wrote {SPEC_FILE}")
+    elif sys.argv[1:]:
+        sys.exit("usage: python -m jobpilot.api [--write]")
+    else:
+        sys.stdout.write(spec_json())
