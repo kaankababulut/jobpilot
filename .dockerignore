@@ -1,0 +1,9 @@
+# Whitelist: ignore everything, then let in only what the API image needs. A secret file added
+# later can never slip into the image by accident; .env, output/, logs/, tests/, .git and
+# config.json are all left out by construction.
+*
+!jobpilot/
+!requirements-api.txt
+# bytecode from local runs: machine-specific junk, and Python rebuilds it anyway
+jobpilot/**/__pycache__
+jobpilot/**/*.pyc

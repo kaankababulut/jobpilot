@@ -59,3 +59,31 @@ jobs:
           DATABASE_URL: postgresql://jobs:ci@127.0.0.1:5432/jobs
           JOBPILOT_REQUIRE_DB: "1"
         run: python -m pytest -q -m db
+
+  # builds the API image and pushes it to GitHub's container registry (ghcr.io), only on main and only
+  # after the tests pass, so nothing untested ever becomes an image
+  image:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write   # this job alone may push images; the rest of the workflow stays read-only
+    steps:
+      - uses: actions/checkout@v5
+      # GITHUB_TOKEN is created for each run and expires with it, so no registry password is stored anywhere
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # sha tag: never moves, so Azure can roll back to any earlier build; main: always the newest one.
+      # Registry image names must be lowercase.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/kaankababulut/jobpilot-api:sha-${{ github.sha }}
+            ghcr.io/kaankababulut/jobpilot-api:main
