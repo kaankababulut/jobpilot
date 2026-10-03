@@ -251,6 +251,7 @@ def test_failed_local_load_does_not_block_azure_load(monkeypatch):
         calls.append((rows, today, cats, cv, kw))
         return False  # the local load fails; the Azure one must still be attempted
     monkeypatch.setattr(job_searcher.jobdb, "safe_load", fake_safe_load)
+    monkeypatch.setattr(job_searcher.azure_firewall, "update_home_rule", lambda cfg, log: False)  # no network
     job_searcher.load_databases([{"Job ID": "1"}], "2026-10-01", {"cv_skills": ["Python"]})
     assert [c[4] for c in calls] == [{}, {"url_var": "AZURE_DATABASE_URL", "label": "Azure Postgres"}]
     assert calls[0][:4] == calls[1][:4] and calls[0][3] == {"Python"}

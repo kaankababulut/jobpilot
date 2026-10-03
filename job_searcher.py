@@ -11,7 +11,7 @@ from collections import Counter
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
-from jobpilot import db as jobdb
+from jobpilot import azure_firewall, db as jobdb
 try:
     from dotenv import load_dotenv
 except ImportError:  # optional: a missing package must not stop the Excel run
@@ -472,6 +472,14 @@ def load_databases(rows: list[dict], today: str, cfg: dict) -> None:
     # Each target fails safe on its own, and the 30-day window means a missed cloud day catches up next run.
     categories, cv = {k: v[0] for k, v in SKILLS.items()}, set(cfg["cv_skills"])
     jobdb.safe_load(rows, today, categories, cv, log)
+    # the home IP changes, and Azure silently drops unlisted IPs: point the firewall rule at today's IP first
+    try:
+        azure_firewall.update_home_rule(cfg, log)
+    except Exception as e:  # it never raises by design; this guard only keeps a bug in it from stopping the load
+        try:
+            log(f"WARNING: Azure firewall update failed: {type(e).__name__}")
+        except Exception:
+            pass
     jobdb.safe_load(rows, today, categories, cv, log, url_var="AZURE_DATABASE_URL", label="Azure Postgres")
 
 
