@@ -67,10 +67,11 @@ The API is read-only and listens on 127.0.0.1 only, so nothing outside this PC c
 2. Start it (the database must be running):
    `uvicorn jobpilot.api:app --host 127.0.0.1 --port 8000`
 3. Open <http://127.0.0.1:8000/docs>, click **Authorize**, paste the key, and try the endpoints. This is the easiest way to use it.
+   (`JOBPILOT_DOCS=0` turns off `/docs`, `/redoc` and `/openapi.json`; the deployed image sets it.)
 
 | Endpoint | Key? | operation_id | Returns |
 |----------|------|--------------|---------|
-| `GET /health` | no | `health` | `{"status": "ok", "db": "ok" / "down" / "not configured"}` |
+| `GET /health` | no | `health` | `{"status": "ok"}`: the API process is up. It never touches the database; use `/runs` to check that |
 | `GET /jobs` | yes | `list_jobs` | One page of jobs, best match first. Filters: `open_to_you`, `min_score`, `skill`, `work_type`, `source`, `since`, `q`; paging: `limit`, `offset`, `has_more` |
 | `GET /jobs/{job_id}` | yes | `get_job` | One job with its full description, red flags and skills (with `on_cv`) |
 | `GET /skills` | yes | `top_skills` | Most-demanded skills in the last `days` days, with share of jobs and `on_cv` |

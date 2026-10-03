@@ -1,18 +1,20 @@
 """Read-only HTTP API over the job database (FastAPI): API-key auth, one read-only connection per
 request, /health and the job endpoints. SQL lives in jobpilot.queries; this layer validates input.
 Run locally: uvicorn jobpilot.api:app --host 127.0.0.1 --port 8000
-(127.0.0.1 only, so nothing outside this PC can reach it; docs at http://127.0.0.1:8000/docs).
+(127.0.0.1 only, so nothing outside this PC can reach it; docs at http://127.0.0.1:8000/docs unless JOBPILOT_DOCS=0).
 Endpoints are plain `def`, not async: psycopg calls block, and FastAPI runs sync endpoints in a
 threadpool so one slow query doesn't stall the others. No connection pool yet; one user doesn't need it."""
 import datetime as dt
+import json
 import logging
 import os
 import secrets
+import sys
 from enum import Enum
 from typing import Annotated, Iterator
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Security
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Path, Query, Request, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
@@ -30,15 +32,9 @@ load_dotenv(os.path.join(ROOT, ".env"))  # doesn't override variables already se
 
 log = logging.getLogger("jobpilot.api")
 
-# LLM orchestrators (Copilot Studio, Power Automate, agents) pick tools by reading these texts,
-# so they say what the API is for, not just what it is
-app = FastAPI(
-    title="JobPilot API",
-    version="0.1.0",
-    description="Read-only access to JobPilot's job-market data: internship and entry-level tech jobs "
-                "collected daily, each scored against the owner's CV, plus which skills are in demand. "
-                "Every data endpoint needs an X-API-Key header; /health doesn't.",
-)
+# routes hang on a router, and create_app() builds the app around it, so tests can build an app
+# with other settings (docs off) without reloading this module
+router = APIRouter()
 
 # auto_error=False: a missing header reaches require_key as None, so we choose the status code,
 # and the scheme still shows up in OpenAPI (the docs' Authorize button, and for tool builders)
@@ -68,7 +64,6 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn  # the with-block closes the connection after the response, even on an error
 
 
-@app.exception_handler(psycopg.OperationalError)
 def db_unavailable(request: Request, exc: psycopg.OperationalError) -> JSONResponse:
     # the driver's message can contain host, user or password, so it's redacted for the log
     # and never sent to the client
@@ -76,20 +71,21 @@ def db_unavailable(request: Request, exc: psycopg.OperationalError) -> JSONRespo
     return JSONResponse(status_code=503, content={"detail": "database unavailable"})
 
 
-@app.get("/health", operation_id="health", summary="Check that the API is up and whether it can reach the database",
-         description="Needs no API key and returns no job data. Always 200 while the API process runs, "
-                     "so it works as a liveness check; `db` is \"ok\", \"down\" or \"not configured\".")
+def query_timed_out(request: Request, exc: psycopg.errors.QueryCanceled) -> JSONResponse:
+    # QueryCanceled (statement_timeout hit) is a subclass of OperationalError; Starlette picks the
+    # handler by walking the exception's class hierarchy, most specific first, so this one wins.
+    # 504, not 503: the database is up, this one query was just too slow
+    log.warning("query timed out: %s", redact(exc, os.environ.get("DATABASE_URL", "").strip()))
+    return JSONResponse(status_code=504, content={"detail": "query timed out"})
+
+
+@router.get("/health", operation_id="health", summary="Check that the API process is up",
+            description="Needs no API key, returns no job data and doesn't touch the database, so it's a cheap "
+                        "public liveness check. To check the database too, call recent_runs (needs the key).")
 def health() -> dict:
-    url = os.environ.get("DATABASE_URL", "").strip()
-    if not url:
-        return {"status": "ok", "db": "not configured"}
-    try:
-        with connect(url, read_only=True) as conn:
-            conn.execute("SELECT 1")
-    except Exception as e:  # health must answer, whatever the database does
-        log.warning("health check: database down: %s", redact(e, url))
-        return {"status": "ok", "db": "down"}
-    return {"status": "ok", "db": "ok"}
+    # no database call: an unauthenticated endpoint that opens connections would let anyone
+    # load the database, and a liveness probe must not fail just because Postgres is slow
+    return {"status": "ok"}
 
 
 # ---------- jobs ----------
@@ -166,11 +162,11 @@ class JobDetail(BaseModel):
 
 # require_key sits in `dependencies`, which FastAPI resolves before get_conn,
 # so a request without a valid key never opens a database connection
-@app.get("/jobs", response_model=JobList, operation_id="list_jobs", dependencies=[Depends(require_key)],
-         summary="List jobs, best CV match first, with optional filters",
-         description="Returns one page of job summaries (no description text), sorted by match_score "
-                     "(highest first), then most recently seen. All filters are optional and combine with AND. "
-                     "Use get_job for the full posting.")
+@router.get("/jobs", response_model=JobList, operation_id="list_jobs", dependencies=[Depends(require_key)],
+            summary="List jobs, best CV match first, with optional filters",
+            description="Returns one page of job summaries (no description text), sorted by match_score "
+                        "(highest first), then most recently seen. All filters are optional and combine with AND. "
+                        "Use get_job for the full posting.")
 def list_jobs(
     conn=Depends(get_conn),
     open_to_you: Annotated[bool | None, Query(
@@ -196,11 +192,11 @@ def list_jobs(
     return JobList(items=rows[:limit], limit=limit, offset=offset, has_more=len(rows) > limit)
 
 
-@app.get("/jobs/{job_id}", response_model=JobDetail, operation_id="get_job", dependencies=[Depends(require_key)],
-         responses={404: {"description": "No job with this id"}},
-         summary="Get one job with its full description and skills",
-         description="Returns every stored field of a job, including the full description, restrictions, "
-                     "red flags and each skill with whether the owner already has it (on_cv).")
+@router.get("/jobs/{job_id}", response_model=JobDetail, operation_id="get_job", dependencies=[Depends(require_key)],
+            responses={404: {"description": "No job with this id"}},
+            summary="Get one job with its full description and skills",
+            description="Returns every stored field of a job, including the full description, restrictions, "
+                        "red flags and each skill with whether the owner already has it (on_cv).")
 # le: jobs.id is a BIGINT, so a bigger number would be a database error (500) rather than a 422
 def get_job(job_id: Annotated[int, Path(ge=1, le=2**63 - 1, description="Job id from list_jobs.")],
             conn=Depends(get_conn)) -> JobDetail:
@@ -238,11 +234,11 @@ class RunList(BaseModel):
     items: list[RunInfo]
 
 
-@app.get("/skills", response_model=SkillDemandList, operation_id="top_skills", dependencies=[Depends(require_key)],
-         summary="Most-demanded skills among recently found jobs, and which the owner lacks",
-         description="Counts the skills asked for by jobs first seen in the last `days` days, most-demanded first. "
-                     "Filter on_cv=false entries with a high share to find skill gaps. Skills are detected when a "
-                     "job is scraped, so a newly tracked skill only shows for jobs fetched after it was added.")
+@router.get("/skills", response_model=SkillDemandList, operation_id="top_skills", dependencies=[Depends(require_key)],
+            summary="Most-demanded skills among recently found jobs, and which the owner lacks",
+            description="Counts the skills asked for by jobs first seen in the last `days` days, most-demanded first. "
+                        "Filter on_cv=false entries with a high share to find skill gaps. Skills are detected when a "
+                        "job is scraped, so a newly tracked skill only shows for jobs fetched after it was added.")
 def top_skills(
     conn=Depends(get_conn),
     days: Annotated[int, Query(
@@ -259,11 +255,68 @@ def top_skills(
     return SkillDemandList(items=queries.top_skills(conn, days=days, category=category, limit=limit), days=days)
 
 
-@app.get("/runs", response_model=RunList, operation_id="recent_runs", dependencies=[Depends(require_key)],
-         summary="Latest database loads, newest first",
-         description="One entry per load into the database. Use it to check whether today's daily load "
-                     "landed: the newest daily entry should have today's run_date.")
+@router.get("/runs", response_model=RunList, operation_id="recent_runs", dependencies=[Depends(require_key)],
+            summary="Latest database loads, newest first",
+            description="One entry per load into the database. Use it to check whether today's daily load "
+                        "landed: the newest daily entry should have today's run_date.")
 def recent_runs(conn=Depends(get_conn),
                 limit: Annotated[int, Query(ge=1, le=50, description="How many loads to return (1-50).")] = 10,
                 ) -> RunList:
     return RunList(items=queries.recent_runs(conn, limit=limit))
+
+
+def create_app(docs: bool | None = None) -> FastAPI:
+    """Builds the app. JOBPILOT_DOCS=0 turns off /docs, /redoc and /openapi.json; anything else keeps them.
+    `docs` overrides the variable (the spec snapshot always builds with docs on)."""
+    # the Dockerfile sets JOBPILOT_DOCS=0, so the deployed image is closed even if nobody remembers
+    # to set it in Azure (fail closed); a local run leaves it unset and /docs keeps working.
+    # app.openapi() still builds the spec in code, so the OpenAPI snapshot works either way
+    if docs is None:
+        docs = os.environ.get("JOBPILOT_DOCS", "").strip() != "0"
+    # LLM orchestrators (Copilot Studio, Power Automate, agents) pick tools by reading these texts,
+    # so they say what the API is for, not just what it is
+    app = FastAPI(
+        title="JobPilot API",
+        version="0.1.0",
+        description="Read-only access to JobPilot's job-market data: internship and entry-level tech jobs "
+                    "collected daily, each scored against the owner's CV, plus which skills are in demand. "
+                    "Every data endpoint needs an X-API-Key header; /health doesn't.",
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+    app.add_exception_handler(psycopg.OperationalError, db_unavailable)
+    app.add_exception_handler(psycopg.errors.QueryCanceled, query_timed_out)
+    app.include_router(router)
+    return app
+
+
+app = create_app()
+
+
+# ---------- OpenAPI snapshot ----------
+# docs/openapi.json is the API's contract, kept in git: step 5's Copilot Studio connector imports it,
+# and a test fails when the code's spec drifts from it, so a contract change is always deliberate.
+# FastAPI emits OpenAPI 3.1; Power Platform connectors want 2.0, and converting is step 5's job.
+SPEC_FILE = os.path.join(ROOT, "docs", "openapi.json")
+
+
+def spec_json() -> str:
+    """The OpenAPI spec as stable text: sorted keys, so a diff shows only real changes."""
+    return json.dumps(create_app(docs=True).openapi(), indent=2, sort_keys=True) + "\n"
+
+
+def write_spec(path: str = SPEC_FILE) -> None:
+    # written here rather than with a shell `>`, because PowerShell's `>` writes UTF-16
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(spec_json())
+
+
+if __name__ == "__main__":  # python -m jobpilot.api [--write]
+    if sys.argv[1:] == ["--write"]:
+        write_spec()
+        print(f"wrote {SPEC_FILE}")
+    elif sys.argv[1:]:
+        sys.exit("usage: python -m jobpilot.api [--write]")
+    else:
+        sys.stdout.write(spec_json())

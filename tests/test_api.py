@@ -1,29 +1,24 @@
 """Tests for the API skeleton in jobpilot.api: /health, the API key check, the per-request
-connection and the database-error handler. No database or network: TestClient runs the app in-process."""
+connection, the database-error handlers and the docs switch. No database or network: TestClient runs
+the app in-process."""
 import logging
-import os
 
 import psycopg
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends
 from fastapi.testclient import TestClient
 
-from conftest import db_unavailable
 from jobpilot import api
 
-# taken before clean_env removes it: CI's own variable, or the one importing api loaded from .env
-REAL_DB_URL = os.environ.get("DATABASE_URL", "").strip()
 URL = "postgresql://jobs:s3cretPass@127.0.0.1:5432/jobs"
 KEY = "test-key-123"
 
 
 @pytest.fixture(autouse=True)
-def clean_env(monkeypatch, request):
+def clean_env(monkeypatch):
     # importing jobpilot.api loads the real .env; start every test without its values
-    # db tests keep it: the pg fixture needs the URL, and in CI there is no .env to reload it from
-    if request.node.get_closest_marker("db") is None:
-        monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("JOBPILOT_API_KEY", raising=False)
+    for name in ("DATABASE_URL", "JOBPILOT_API_KEY", "JOBPILOT_DOCS"):
+        monkeypatch.delenv(name, raising=False)
 
 
 class FakeConn:
@@ -31,7 +26,6 @@ class FakeConn:
     def __init__(self):
         self.autocommit = False
         self.closed = False
-        self.sql = []
 
     def __enter__(self):
         return self
@@ -40,12 +34,13 @@ class FakeConn:
         self.closed = True
         return False
 
-    def execute(self, sql):
-        self.sql.append(sql)
-
 
 def boom(url, read_only=False):
     raise psycopg.OperationalError(f"connection to {url} failed: password s3cretPass rejected")
+
+
+def no_connect(*args, **kwargs):
+    pytest.fail("connect should not be called")
 
 
 @pytest.fixture
@@ -55,9 +50,9 @@ def client():
 
 @pytest.fixture
 def test_app():
-    """A fresh app with test-only routes using the real dependencies, so no throwaway endpoint ships."""
-    app = FastAPI()
-    app.add_exception_handler(psycopg.OperationalError, api.db_unavailable)
+    """A fresh real app (same routes and error handlers) plus test-only routes using the real
+    dependencies, so no throwaway endpoint ships."""
+    app = api.create_app()
 
     @app.get("/protected", dependencies=[Depends(api.require_key)])
     def protected():
@@ -71,31 +66,22 @@ def test_app():
     def fails():
         boom(URL)
 
+    @app.get("/times-out")
+    def times_out():
+        raise psycopg.errors.QueryCanceled(
+            f"canceling statement due to statement timeout on {URL} (password s3cretPass)")
+
     return app
 
 
-def test_health_without_database_url(client, monkeypatch):
-    monkeypatch.setattr(api, "connect", lambda *a, **k: pytest.fail("connect should not be called"))
+@pytest.mark.parametrize("db_url", [None, URL])
+def test_health_never_touches_the_database(client, monkeypatch, db_url):
+    # a public endpoint that opened connections would let anyone without a key load the database
+    if db_url:
+        monkeypatch.setenv("DATABASE_URL", db_url)
+    monkeypatch.setattr(api, "connect", no_connect)
     r = client.get("/health")
-    assert r.status_code == 200 and r.json() == {"status": "ok", "db": "not configured"}
-
-
-def test_health_reports_down_without_leaking(client, monkeypatch, caplog):
-    monkeypatch.setenv("DATABASE_URL", URL)
-    monkeypatch.setattr(api, "connect", boom)
-    with caplog.at_level(logging.WARNING, logger="jobpilot.api"):
-        r = client.get("/health")
-    assert r.status_code == 200 and r.json() == {"status": "ok", "db": "down"}
-    for text in (r.text, caplog.text):
-        assert URL not in text and "s3cretPass" not in text
-
-
-def test_health_ok_uses_read_only_connection(client, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", URL)
-    conn, calls = FakeConn(), []
-    monkeypatch.setattr(api, "connect", lambda url, read_only=False: calls.append(read_only) or conn)
-    assert client.get("/health").json() == {"status": "ok", "db": "ok"}
-    assert calls == [True] and conn.sql == ["SELECT 1"] and conn.closed
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
 
 
 def test_key_not_configured_fails_closed(test_app, monkeypatch):
@@ -118,7 +104,6 @@ def test_right_key_passes(test_app, monkeypatch):
 
 
 def test_openapi_has_key_scheme_and_health_summary(test_app):
-    test_app.include_router(api.app.router)  # /health from the real app, next to the protected route
     spec = TestClient(test_app).get("/openapi.json").json()
     scheme = spec["components"]["securitySchemes"]["APIKeyHeader"]
     assert scheme == {"type": "apiKey", "in": "header", "name": "X-API-Key",
@@ -165,17 +150,35 @@ def test_operational_error_in_route_is_503_without_leaking(test_app, monkeypatch
     assert URL not in r.text and "s3cretPass" not in r.text
 
 
-@pytest.mark.db
-def test_health_with_real_database(client, monkeypatch, real_db_url):
-    monkeypatch.setenv("DATABASE_URL", real_db_url)  # read-only SELECT 1; touches no table
-    body = client.get("/health").json()
-    if body["db"] == "down":
-        db_unavailable("database not reachable")
-    assert body == {"status": "ok", "db": "ok"}
+def test_query_timeout_is_504_not_503_without_leaking(test_app, monkeypatch, caplog):
+    # QueryCanceled is a subclass of OperationalError: the more specific handler must win
+    monkeypatch.setenv("DATABASE_URL", URL)
+    with caplog.at_level(logging.WARNING, logger="jobpilot.api"):
+        r = TestClient(test_app).get("/times-out")
+    assert r.status_code == 504 and r.json() == {"detail": "query timed out"}
+    assert "statement timeout" not in r.text  # no driver text reaches the client
+    assert "<DATABASE_URL>" in caplog.text  # logged, but redacted
+    for text in (r.text, caplog.text):
+        assert URL not in text and "s3cretPass" not in text
 
 
-@pytest.fixture
-def real_db_url():
-    if not REAL_DB_URL:
-        db_unavailable("DATABASE_URL not set")
-    return REAL_DB_URL
+# ---------- docs switch (create_app reads JOBPILOT_DOCS, so no module reload is needed) ----------
+@pytest.mark.parametrize("value", [None, "1", "", "yes"])
+def test_docs_on_unless_switched_off(monkeypatch, value):
+    if value is not None:
+        monkeypatch.setenv("JOBPILOT_DOCS", value)
+    client = TestClient(api.create_app())
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 200, path
+
+
+@pytest.mark.parametrize("value", ["0", " 0 "])
+def test_docs_off_hides_docs_but_spec_still_builds(monkeypatch, value):
+    monkeypatch.setenv("JOBPILOT_DOCS", value)
+    app = api.create_app()
+    client = TestClient(app)
+    for path in ("/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"):
+        assert client.get(path).status_code == 404, path
+    assert client.get("/health").json() == {"status": "ok"}  # the API itself still serves
+    spec = app.openapi()  # built in code, for the snapshot, even with the URL closed
+    assert set(spec["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs"}
