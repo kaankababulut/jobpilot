@@ -17,6 +17,7 @@
   "exclude_companies": ["Jobright.ai", "Swooped", "Haystack", "Why Hiring", "LueinHire", "internmo", "Jobgether"],
   "output_dir": "output",
   "master_window_days": 30,
+  "azure_firewall": {"resource_group": "rg-jobpilot", "server": "psql-jobpilot-kk", "rule": "home"},
 
   "include_title_keywords": [
     "engineer", "developer", "software", "data", "analyst", "analytics", "intelligence",
