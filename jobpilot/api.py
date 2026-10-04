@@ -1,7 +1,8 @@
 """Read-only HTTP API over the job database (FastAPI): API-key auth, one read-only connection per
 request, /health and the job endpoints. SQL lives in jobpilot.queries; this layer validates input.
 Run locally: uvicorn jobpilot.api:app --host 127.0.0.1 --port 8000
-(127.0.0.1 only, so nothing outside this PC can reach it; docs at http://127.0.0.1:8000/docs unless JOBPILOT_DOCS=0).
+(127.0.0.1 locally, so nothing outside this PC can reach it; docs at http://127.0.0.1:8000/docs unless JOBPILOT_DOCS=0).
+Deployed: the Dockerfile runs it on 0.0.0.0 in Azure Container Apps, behind HTTPS ingress, with docs off.
 Endpoints are plain `def`, not async: psycopg calls block, and FastAPI runs sync endpoints in a
 threadpool so one slow query doesn't stall the others. No connection pool yet; one user doesn't need it."""
 import datetime as dt
