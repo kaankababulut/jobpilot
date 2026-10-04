@@ -298,7 +298,8 @@ app = create_app()
 # ---------- OpenAPI snapshot ----------
 # docs/openapi.json is the API's contract, kept in git: step 5's Copilot Studio connector imports it,
 # and a test fails when the code's spec drifts from it, so a contract change is always deliberate.
-# FastAPI emits OpenAPI 3.1; Power Platform connectors want 2.0, and converting is step 5's job.
+# FastAPI emits OpenAPI 3.1; Power Platform connectors want 2.0, so jobpilot.openapi2 converts it
+# into docs/openapi-v2.json. Both snapshots come from this code: regenerate them together.
 SPEC_FILE = os.path.join(ROOT, "docs", "openapi.json")
 
 
