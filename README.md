@@ -114,6 +114,7 @@ curl -s -H "X-API-Key: $JOBPILOT_API_KEY" "http://127.0.0.1:8000/runs?limit=5"
 ```
 
 If you change an endpoint, regenerate the contract with `python -m jobpilot.api --write` and commit `docs/openapi.json`.
+Then regenerate the Power Platform (Swagger 2.0) copy with `python -m jobpilot.openapi2 --write` and commit `docs/openapi-v2.json`.
 
 ## Deploy to Azure
 

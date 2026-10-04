@@ -1,0 +1,728 @@
+{
+  "basePath": "/",
+  "consumes": [
+    "application/json"
+  ],
+  "definitions": {
+    "JobDetail": {
+      "properties": {
+        "apply_url": {
+          "title": "Apply Url",
+          "type": "string",
+          "x-nullable": true
+        },
+        "company": {
+          "title": "Company",
+          "type": "string",
+          "x-nullable": true
+        },
+        "date_posted": {
+          "format": "date",
+          "title": "Date Posted",
+          "type": "string",
+          "x-nullable": true
+        },
+        "description": {
+          "description": "The full posting text.",
+          "title": "Description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "employment_type": {
+          "title": "Employment Type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "first_seen": {
+          "description": "First day JobPilot saw the job.",
+          "format": "date",
+          "title": "First Seen",
+          "type": "string"
+        },
+        "id": {
+          "description": "Job id.",
+          "title": "Id",
+          "type": "integer"
+        },
+        "last_seen": {
+          "description": "Last day JobPilot saw the job.",
+          "format": "date",
+          "title": "Last Seen",
+          "type": "string"
+        },
+        "location": {
+          "title": "Location",
+          "type": "string",
+          "x-nullable": true
+        },
+        "match_score": {
+          "description": "0-100 fit to the owner's CV; null if not scored.",
+          "title": "Match Score",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "open_to_you": {
+          "description": "True if an applicant based in T\u00fcrkiye can apply.",
+          "title": "Open To You",
+          "type": "boolean"
+        },
+        "red_flags": {
+          "description": "Warning signs found in the posting, e.g. unpaid or senior-only.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Red Flags",
+          "type": "array"
+        },
+        "region": {
+          "title": "Region",
+          "type": "string",
+          "x-nullable": true
+        },
+        "restrictions": {
+          "description": "Location or eligibility limits found in the posting.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Restrictions",
+          "type": "array"
+        },
+        "salary": {
+          "description": "Salary text as posted; null if not disclosed.",
+          "title": "Salary",
+          "type": "string",
+          "x-nullable": true
+        },
+        "seniority": {
+          "title": "Seniority",
+          "type": "string",
+          "x-nullable": true
+        },
+        "skills": {
+          "description": "Skills the posting asks for, sorted by name.",
+          "items": {
+            "$ref": "#/definitions/SkillOnJob"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "source": {
+          "description": "Where the job was found: linkedin or himalayas.",
+          "title": "Source",
+          "type": "string"
+        },
+        "source_id": {
+          "description": "The job's id at its source (LinkedIn id or Himalayas URL).",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "work_type": {
+          "description": "Remote, Remote? (unclear), Hybrid or On-site.",
+          "title": "Work Type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "years_required": {
+          "description": "Years of experience the posting asks for, if stated.",
+          "title": "Years Required",
+          "type": "integer",
+          "x-nullable": true
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "source_id",
+        "region",
+        "title",
+        "company",
+        "location",
+        "work_type",
+        "open_to_you",
+        "restrictions",
+        "red_flags",
+        "date_posted",
+        "employment_type",
+        "seniority",
+        "salary",
+        "apply_url",
+        "match_score",
+        "years_required",
+        "description",
+        "first_seen",
+        "last_seen",
+        "updated_at",
+        "skills"
+      ],
+      "title": "JobDetail",
+      "type": "object"
+    },
+    "JobList": {
+      "properties": {
+        "has_more": {
+          "description": "True if another page exists; fetch it with offset + limit.",
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/JobSummary"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "limit": {
+          "title": "Limit",
+          "type": "integer"
+        },
+        "offset": {
+          "title": "Offset",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "limit",
+        "offset",
+        "has_more"
+      ],
+      "title": "JobList",
+      "type": "object"
+    },
+    "JobSummary": {
+      "properties": {
+        "apply_url": {
+          "title": "Apply Url",
+          "type": "string",
+          "x-nullable": true
+        },
+        "company": {
+          "title": "Company",
+          "type": "string",
+          "x-nullable": true
+        },
+        "date_posted": {
+          "format": "date",
+          "title": "Date Posted",
+          "type": "string",
+          "x-nullable": true
+        },
+        "first_seen": {
+          "description": "First day JobPilot saw the job.",
+          "format": "date",
+          "title": "First Seen",
+          "type": "string"
+        },
+        "id": {
+          "description": "Job id; pass it to get_job for the full posting.",
+          "title": "Id",
+          "type": "integer"
+        },
+        "last_seen": {
+          "description": "Last day JobPilot saw the job.",
+          "format": "date",
+          "title": "Last Seen",
+          "type": "string"
+        },
+        "location": {
+          "title": "Location",
+          "type": "string",
+          "x-nullable": true
+        },
+        "match_score": {
+          "description": "0-100 fit to the owner's CV; null if not scored.",
+          "title": "Match Score",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "open_to_you": {
+          "description": "True if an applicant based in T\u00fcrkiye can apply.",
+          "title": "Open To You",
+          "type": "boolean"
+        },
+        "skills": {
+          "description": "Skills the posting asks for, sorted by name.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array"
+        },
+        "source": {
+          "description": "Where the job was found: linkedin or himalayas.",
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "work_type": {
+          "description": "Remote, Remote? (unclear), Hybrid or On-site.",
+          "title": "Work Type",
+          "type": "string",
+          "x-nullable": true
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "title",
+        "company",
+        "location",
+        "work_type",
+        "open_to_you",
+        "match_score",
+        "date_posted",
+        "first_seen",
+        "last_seen",
+        "apply_url",
+        "skills"
+      ],
+      "title": "JobSummary",
+      "type": "object"
+    },
+    "RunInfo": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "integer"
+        },
+        "kind": {
+          "description": "daily (the 12:00 scheduled run) or backfill (old Excel files loaded by hand).",
+          "title": "Kind",
+          "type": "string"
+        },
+        "loaded_at": {
+          "description": "When the load finished writing to the database.",
+          "format": "date-time",
+          "title": "Loaded At",
+          "type": "string"
+        },
+        "rows_offered": {
+          "description": "Job rows the load was given.",
+          "title": "Rows Offered",
+          "type": "integer"
+        },
+        "rows_written": {
+          "description": "Jobs inserted or updated; older data than what's stored is skipped.",
+          "title": "Rows Written",
+          "type": "integer"
+        },
+        "run_date": {
+          "description": "The date of the data that was loaded.",
+          "format": "date",
+          "title": "Run Date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "run_date",
+        "loaded_at",
+        "rows_offered",
+        "rows_written"
+      ],
+      "title": "RunInfo",
+      "type": "object"
+    },
+    "RunList": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/RunInfo"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "RunList",
+      "type": "object"
+    },
+    "SkillDemand": {
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "jobs": {
+          "description": "Number of jobs first seen in the window that ask for this skill.",
+          "title": "Jobs",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "on_cv": {
+          "description": "True if the owner already has this skill; false with a high share is a skill gap.",
+          "title": "On Cv",
+          "type": "boolean"
+        },
+        "share": {
+          "description": "Fraction (0-1) of all jobs first seen in the window that ask for this skill.",
+          "title": "Share",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "category",
+        "on_cv",
+        "jobs",
+        "share"
+      ],
+      "title": "SkillDemand",
+      "type": "object"
+    },
+    "SkillDemandList": {
+      "properties": {
+        "days": {
+          "description": "The window: jobs first seen in the last this many days.",
+          "title": "Days",
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/SkillDemand"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items",
+        "days"
+      ],
+      "title": "SkillDemandList",
+      "type": "object"
+    },
+    "SkillOnJob": {
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "on_cv": {
+          "description": "True if the owner already has this skill.",
+          "title": "On Cv",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "category",
+        "on_cv"
+      ],
+      "title": "SkillOnJob",
+      "type": "object"
+    }
+  },
+  "host": "ca-jobpilot-api.kindpebble-9d30ee27.swedencentral.azurecontainerapps.io",
+  "info": {
+    "description": "Read-only access to JobPilot's job-market data: internship and entry-level tech jobs collected daily, each scored against the owner's CV, plus which skills are in demand. Every data endpoint needs an X-API-Key header; /health doesn't.",
+    "title": "JobPilot API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "Needs no API key, returns no job data and doesn't touch the database, so it's a cheap public liveness check. To check the database too, call recent_runs (needs the key).",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "schema": {
+              "additionalProperties": true,
+              "title": "Response Health",
+              "type": "object"
+            }
+          }
+        },
+        "summary": "Check that the API process is up"
+      }
+    },
+    "/jobs": {
+      "get": {
+        "description": "Returns one page of job summaries (no description text), sorted by match_score (highest first), then most recently seen. All filters are optional and combine with AND. Use get_job for the full posting.",
+        "operationId": "list_jobs",
+        "parameters": [
+          {
+            "description": "true: only jobs an applicant in T\u00fcrkiye can apply to; false: only those they can't.",
+            "in": "query",
+            "name": "open_to_you",
+            "required": false,
+            "type": "boolean",
+            "x-ms-summary": "Open To You"
+          },
+          {
+            "description": "Only jobs with a match_score of at least this (0-100); unscored jobs drop out.",
+            "in": "query",
+            "maximum": 100,
+            "minimum": 0,
+            "name": "min_score",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Min Score"
+          },
+          {
+            "description": "Only jobs that ask for this skill, e.g. Python (case-insensitive).",
+            "in": "query",
+            "maxLength": 60,
+            "minLength": 1,
+            "name": "skill",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Skill"
+          },
+          {
+            "description": "Only jobs with this work type.",
+            "enum": [
+              "Remote",
+              "Remote?",
+              "Hybrid",
+              "On-site"
+            ],
+            "in": "query",
+            "name": "work_type",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Work Type"
+          },
+          {
+            "description": "Only jobs from this source.",
+            "enum": [
+              "linkedin",
+              "himalayas"
+            ],
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Source"
+          },
+          {
+            "description": "Only jobs first seen on or after this date (YYYY-MM-DD).",
+            "format": "date",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Since"
+          },
+          {
+            "description": "Text to find in the title or company (case-insensitive).",
+            "in": "query",
+            "maxLength": 100,
+            "minLength": 1,
+            "name": "q",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Q"
+          },
+          {
+            "default": 20,
+            "description": "Page size (1-100).",
+            "in": "query",
+            "maximum": 100,
+            "minimum": 1,
+            "name": "limit",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Limit"
+          },
+          {
+            "default": 0,
+            "description": "How many jobs to skip, for paging (0-10000).",
+            "in": "query",
+            "maximum": 10000,
+            "minimum": 0,
+            "name": "offset",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "schema": {
+              "$ref": "#/definitions/JobList"
+            }
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List jobs, best CV match first, with optional filters"
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "description": "Returns every stored field of a job, including the full description, restrictions, red flags and each skill with whether the owner already has it (on_cv).",
+        "operationId": "get_job",
+        "parameters": [
+          {
+            "description": "Job id from list_jobs.",
+            "in": "path",
+            "minimum": 1,
+            "name": "job_id",
+            "required": true,
+            "type": "integer",
+            "x-ms-summary": "Job Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "schema": {
+              "$ref": "#/definitions/JobDetail"
+            }
+          },
+          "404": {
+            "description": "No job with this id"
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Get one job with its full description and skills"
+      }
+    },
+    "/runs": {
+      "get": {
+        "description": "One entry per load into the database. Use it to check whether today's daily load landed: the newest daily entry should have today's run_date.",
+        "operationId": "recent_runs",
+        "parameters": [
+          {
+            "default": 10,
+            "description": "How many loads to return (1-50).",
+            "in": "query",
+            "maximum": 50,
+            "minimum": 1,
+            "name": "limit",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "schema": {
+              "$ref": "#/definitions/RunList"
+            }
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Latest database loads, newest first"
+      }
+    },
+    "/skills": {
+      "get": {
+        "description": "Counts the skills asked for by jobs first seen in the last `days` days, most-demanded first. Filter on_cv=false entries with a high share to find skill gaps. Skills are detected when a job is scraped, so a newly tracked skill only shows for jobs fetched after it was added.",
+        "operationId": "top_skills",
+        "parameters": [
+          {
+            "default": 30,
+            "description": "Window size: jobs first seen in the last this many days (1-365).",
+            "in": "query",
+            "maximum": 365,
+            "minimum": 1,
+            "name": "days",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Days"
+          },
+          {
+            "description": "Only skills in this category (exact match). Current categories: AI/ML, Backend, Cloud & DevOps, Data, Frontend & Mobile, Languages, Languages (spoken), Microsoft & Low-code, Tools & Practices.",
+            "in": "query",
+            "maxLength": 40,
+            "minLength": 1,
+            "name": "category",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Category"
+          },
+          {
+            "default": 20,
+            "description": "How many skills to return (1-100).",
+            "in": "query",
+            "maximum": 100,
+            "minimum": 1,
+            "name": "limit",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "schema": {
+              "$ref": "#/definitions/SkillDemandList"
+            }
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Most-demanded skills among recently found jobs, and which the owner lacks"
+      }
+    }
+  },
+  "produces": [
+    "application/json"
+  ],
+  "schemes": [
+    "https"
+  ],
+  "securityDefinitions": {
+    "APIKeyHeader": {
+      "description": "The value of JOBPILOT_API_KEY on the server.",
+      "in": "header",
+      "name": "X-API-Key",
+      "type": "apiKey"
+    }
+  },
+  "swagger": "2.0"
+}
