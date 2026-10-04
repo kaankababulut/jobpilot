@@ -16,6 +16,15 @@ When a skill here is solid enough to go on your CV, also add it to `cv_skills` i
 | 2026-10-01 | Safe read-only SQL | Parameterised queries with filters, LIKE escaping, `has_more` paging, skill demand with share of jobs; read-only connection option | `jobpilot/queries.py`, `jobpilot/db.py`, commits 24417bb, bd9e6c1, 883d228 | No |
 | 2026-10-01 | FastAPI + API security | 5 endpoints (`/health`, `/jobs`, `/jobs/{job_id}`, `/skills`, `/runs`), API key failing closed, constant-time compare, OpenAPI written for LLM tools | `jobpilot/api.py`, commits 709f930, d0b6b09, 00752ea | No |
 | 2026-10-01 | Testing with pytest | Suite now 242 default + 56 opt-in database tests | `tests/` | No |
+| 2026-10-02 | Azure Database for PostgreSQL | Flexible Server (PG 17, B1ms, free tier) in Sweden Central; the daily run loads into it as a second, fail-safe target | `job_searcher.py`, `jobpilot/db.py`, commits 435c7d5, bbda844 | No |
+| 2026-10-02 | Database security (least privilege) | Migration 002: SELECT-only role `jobpilot_api`, read-only default, connection limit 5, no access to `schema_migrations` | `db/migrations/002_api_reader_role.sql`, commit e665eaf | No |
+| 2026-10-02 | Performance: network round trips | Pipelined `executemany` + one `unnest` insert; Azure backfill went from 4 min (339 jobs) to 19 s (389 jobs) | `jobpilot/db.py`, commit 519cb2d | No |
+| 2026-10-03 | Resilience: retries | Whole-round fetch retry (3 rounds, 120 s) only when every source had a network error, after a lost day | `job_searcher.py`, commit 8769725 (PR #6) | No |
+| 2026-10-03 | Azure identity (Entra ID, RBAC) | Service principal with a custom role (firewall rules read/write only) on one server; the run moves the firewall rule to today's IP | `jobpilot/azure_firewall.py`, commit 388095f (PR #7) | No |
+| 2026-10-03 | Production-ready API | DB-free `/health`, docs off by default, 504 on query timeouts, OpenAPI contract snapshot, pinned dependencies | `jobpilot/api.py`, `docs/openapi.json`, `requirements-api.txt`, commits 90e4ce6, 41b33c6 | No |
+| 2026-10-03 | Docker images + CI/CD | Whitelist `.dockerignore`, non-root image, CI builds and pushes `sha-<commit>` tags to ghcr.io after tests pass on `main` | `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`, commit c4e50b6 | No |
+| 2026-10-04 | Azure Container Apps | Deployed the API (Consumption, 0.25 vCPU, min 0 / max 1 replica, HTTPS) behind a $5 budget; live checks passed | README "Deploy to Azure", PR #8 (287bafe) | No |
+| 2026-10-04 | Testing with pytest | Suite now 308 default + 63 opt-in database tests | `tests/` | No |
 
 ## 2026-10-01: Postgres loader (roadmap step 2)
 
@@ -66,3 +75,39 @@ When a skill here is solid enough to go on your CV, also add it to `cv_skills` i
 - *Why no connection pool or async?* One user and a few hundred rows. A short connection per request is simple and never stays idle in a transaction. FastAPI runs sync endpoints in a thread pool, so a slow query doesn't block others. I'd add a pool when traffic needs it.
 - *How does your paging work, and why not return a total count?* `limit + 1` rows tell me whether `has_more` is true, without a `count(*)`. The sort ends with the id, so `OFFSET` paging never repeats or skips a job.
 - *How did you design the API for LLM agents?* Stable `operation_id`s as tool names, descriptions that say when to use each endpoint, enums for fixed values so typos get a 422, and flat response models because Power Platform imports OpenAPI 2.0.
+
+## 2026-10-04: Azure deployment (roadmap step 4)
+
+**What I built.** The API now runs on Azure Container Apps over HTTPS, in front of an Azure PostgreSQL database. The 12:00 run on my PC loads Excel, the local database and the Azure database; each target fails safe on its own. Before the cloud load, the run moves the Azure firewall rule to my current home IP. Everything runs on free tiers under a $5/month budget with alerts. Live checks on 2026-10-04: `/health` 200, `/docs` 404, `/jobs` 401 without the key and 200 in about 0.5 s with it (top open matches 91, 88, 87), `/skills` put Python in 60% of 428 jobs and SQL in 54%, and http redirected to https.
+
+**Key concepts in plain words**
+- **Managed database.** Azure runs PostgreSQL for me: patches, backups (7 days) and TLS. I only manage the data, users and firewall.
+- **Region restrictions.** Not every region offers every service to every subscription. Germany West Central refused a new Postgres server for my new subscription, so everything is in Sweden Central.
+- **Free-tier traps.** "Free" has limits and add-ons that aren't free: high availability, geo-backup, storage autogrow, Defender, and a Log Analytics workspace the portal created by default. I turned them off or set logging to "don't save logs", and set a budget alert from day one. The database's free tier ends after 12 months (around Sep 2027).
+- **Scale to zero and cold starts.** With min 0 replicas the app stops when nobody calls it, so it costs nothing. The first request after a pause has to start the container, so it is slower. Max 1 replica caps cost if someone floods it.
+- **Container images and immutable tags.** An image is the app plus everything it needs, frozen. CI tags each build with its commit hash and never reuses a tag, so I know exactly what's running, and rollback means picking an older tag.
+- **Whitelist `.dockerignore`.** Instead of listing what to leave out (and forgetting something), it leaves out everything and lists what goes in. A new secret file can't end up in the image by accident.
+- **Fail closed.** When a setting is missing or wrong, choose the safe outcome. The image turns the API docs off unless someone turns them on; the API refuses data requests when no key is set.
+- **Least-privilege roles.** Give each user exactly what it needs. The API's database role can only `SELECT` four tables. A session "read-only" flag can be switched off by the client; a missing privilege can't.
+- **Service principal + custom RBAC role.** A service principal is an identity for a program, not a person. Azure RBAC decides what it may do, and where. Mine has a custom role with two actions (read and write firewall rules), on one server only. A leaked secret can move one firewall rule, nothing else.
+- **Dynamic IP and firewall automation.** My home IP changes almost daily and Azure drops unknown IPs without an error, so the load just times out. The run updates the rule to today's IP, then probes the database until it answers.
+- **Shared outbound IPs trade-off.** Container Apps on the cheap plan sends traffic from a shared pool of about 170 IPs, more than the firewall's ~128-rule limit. A fixed IP or a private network costs more than my budget, so I allowed Azure services and rely on strong passwords, TLS and the SELECT-only role. In production: VNet integration and a private endpoint.
+- **Network round trips and pipelining.** Each request to a remote database waits for the answer before the next one. Pipelining sends many statements, then waits once. That turned a 4-minute load into 19 seconds.
+- **Dev/prod parity.** Local Docker, CI and Azure all run PostgreSQL 17, so tests mean something for production.
+- **Retry only what can recover.** A network error after waking the PC can fix itself, so the run waits and retries. A 401 from a server won't, so it isn't retried.
+
+**Lessons from mistakes**
+- Pasting a password into psql's hidden prompt through `docker exec` silently changed it, twice. Now a script sets passwords (`ALTER ROLE ... PASSWORD` over the admin connection) and copies them to the clipboard.
+- A screenshot showed a secret value. I rotated it.
+- Wi-Fi said "connected" before traffic actually worked, and a day of data was lost. That's why the retry exists.
+
+**Interview questions**
+- *How is your project deployed?* The API is a Docker image built by GitHub Actions after the tests pass, stored in ghcr.io with a commit-hash tag, and run on Azure Container Apps over HTTPS. Data sits in Azure Database for PostgreSQL Flexible Server. A daily job on my PC loads it.
+- *How do you keep cloud costs under control?* Free tiers, a $5 budget with alerts at 50% and 100% actual and 100% forecast, max 1 replica, scale to zero, and no paid add-ons like HA, geo-backup or Log Analytics. I know the free database tier ends after 12 months.
+- *What's the trade-off of scaling to zero?* It costs nothing when idle, but the first request after a pause is slower (a cold start). For one user that's fine; for a user-facing product I'd keep one replica warm.
+- *Your database allows Azure services. Isn't that insecure?* It's a trade-off I chose on purpose. The tight version (home IP plus the app's IPs) doesn't work because the app's outbound pool is about 170 shared IPs, over the rule limit, and fixing that costs more than my budget. I compensate with long random passwords, TLS and a SELECT-only role. In production I'd use VNet integration and a private endpoint, so the database has no public address.
+- *How does the API avoid writing to the database?* Three layers: the code only runs parameterised `SELECT`s, the session is read-only, and the role only has `SELECT` on four tables. The last one is enforced by Postgres no matter what the client does.
+- *How did you handle the changing home IP?* A service principal with a custom role that can only read and write firewall rules on that one server. Before the cloud load, the run points the rule at today's IP and probes the database, within a 3-minute budget. If it fails, it logs one line and the rest of the run carries on.
+- *How did you make the cloud load faster?* Measured first: 4 minutes for 339 jobs, because each job needed about 4 round trips to a remote server. Pipelined `executemany` and one `unnest` insert brought it to about 16 round trips per batch: 19 s for 389 jobs, with the same per-row logic and tests.
+- *How do you deploy and roll back?* Merge to `main`, CI builds `sha-<commit>`, and I create a new revision with that tag in the portal. Rollback is a new revision with the previous tag. I left out automatic deploys (OIDC) because I deploy rarely and it's another identity to secure.
+- *What would you change for a real production system?* Private networking, a separate writer role for the loader, Key Vault, automated deploys, stored logs with alerts, and rate limiting or API Management.
