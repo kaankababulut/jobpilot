@@ -6,19 +6,20 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 
 ## Current state
 - `job_searcher.py`: the entry point. It fetches from LinkedIn (via Apify) and Himalayas (retrying the round when every source has a network error), writes Excel to `output/`, loads the 30-day window into local Postgres, moves the Azure firewall rule to today's IP (`jobpilot.azure_firewall`), then loads Azure Postgres. Each load fails safe and never breaks the run.
-- `jobpilot/`: `records.py` (Excel row → DB record, pure), `db.py` (idempotent upserts, `safe_load`, `connect(read_only=True)`), `backfill.py` (`python -m jobpilot.backfill`), `migrate.py` (schema migrations), `queries.py` (the API's read-only SQL), `api.py` (FastAPI app, X-API-Key auth), `azure_firewall.py` (points the Azure firewall rule at today's IP via a least-privilege service principal). `migrate`/`backfill` take `--url-env AZURE_DATABASE_URL` for the cloud DB.
+- `jobpilot/`: `records.py` (Excel row → DB record, pure), `db.py` (idempotent upserts, `safe_load`, `connect(read_only=True)`), `backfill.py` (`python -m jobpilot.backfill`), `migrate.py` (schema migrations), `queries.py` (the API's read-only SQL), `api.py` (FastAPI app, X-API-Key auth), `azure_firewall.py` (points the Azure firewall rule at today's IP via a least-privilege service principal). `migrate`/`backfill` take `--url-env AZURE_DATABASE_URL` for the cloud DB, `openapi2.py` (OpenAPI 3.1 → Swagger 2.0 for the Power Platform connector, `python -m jobpilot.openapi2 --write`).
 - `config.json`: search titles, regions, filters and the CV skill list (`cv_skills` = skills the owner already has).
 - `tests/`: pytest suite (analysis, records, loader, migrations, queries, API). DB tests are opt-in: `python -m pytest -q -m db` (needs the container; uses a throwaway schema). CI (`.github/workflows/ci.yml`) runs both on every PR, and on pushes to main builds and pushes the API image to ghcr.io (`sha-<commit>` tags); `JOBPILOT_REQUIRE_DB=1` turns DB-test skips into failures there.
 - `docker-compose.yml`: local PostgreSQL (with pgvector). Tables: jobs, skills, job_skills, runs.
 - `db/migrations/` + `jobpilot/migrate.py`: the schema as numbered SQL files (001 schema, 002 SELECT-only `jobpilot_api` role), applied by `python -m jobpilot.migrate`. Schema changes go in a new file (003_...); grant new tables to `jobpilot_api` in the same migration; never edit an applied one.
-- `Dockerfile` + whitelist `.dockerignore`: the API image (non-root, `JOBPILOT_DOCS=0`). `requirements-api.txt`: pinned API deps (included by `requirements.txt`). `docs/openapi.json`: contract snapshot, regenerate with `python -m jobpilot.api --write`.
+- `Dockerfile` + whitelist `.dockerignore`: the API image (non-root, `JOBPILOT_DOCS=0`). `requirements-api.txt`: pinned API deps (included by `requirements.txt`). `docs/openapi.json`: contract snapshot, regenerate with `python -m jobpilot.api --write`; `docs/openapi-v2.json`: Swagger 2.0 copy for the connector, `python -m jobpilot.openapi2 --write` (both snapshot-tested).
 - Azure (Sweden Central, rg-jobpilot): Postgres Flexible `psql-jobpilot-kk` and Container App `ca-jobpilot-api` (live API). Runbook in README "Deploy to Azure".
+- Power Platform (developer environment, solution JobPilot): connector JobPilot, flow "JobPilot daily alert" (13:30 → Telegram), agent "JobPilot Career Assistant". Runbook docs/COPILOT_STUDIO.md.
 
 ## Hard rules
 - **Never run `job_searcher.py` or `run_now.cmd`.** Each run costs about $0.45 of Apify credit. Ask the owner first.
 - **Don't rename or move `job_searcher.py` or `config.json`.** Windows Task Scheduler runs `job_searcher.py` from this folder at 12:00. Refactor by extracting modules that `job_searcher.py` imports, and keep it as the entry point.
 - Excel output must keep working until the owner says otherwise. New storage (Postgres) is added alongside it, not instead of it.
-- Secrets live only in environment variables or `.env` (git-ignored): `APIFY_TOKEN`, `POSTGRES_*`, `DATABASE_URL`, `JOBPILOT_API_KEY`, `JOBPILOT_CLOUD_API_KEY`, `AZURE_DATABASE_URL`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`, `ANTHROPIC_API_KEY`. Never print them or put them in code.
+- Secrets live only in environment variables or `.env` (git-ignored): `APIFY_TOKEN`, `POSTGRES_*`, `DATABASE_URL`, `JOBPILOT_API_KEY`, `JOBPILOT_CLOUD_API_KEY`, `AZURE_DATABASE_URL`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`, `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`. Never print them or put them in code.
 - `output/` and `logs/` hold scraped data and stay out of git.
 - Tests never call the network or Apify.
 - Don't commit or push unless the owner asks.
@@ -29,7 +30,7 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 - API: `uvicorn jobpilot.api:app --host 127.0.0.1 --port 8000` (docs at http://127.0.0.1:8000/docs; needs `JOBPILOT_API_KEY` in `.env`)
 - Schema: `python -m jobpilot.migrate` (fresh database; `--baseline` once for a database built before migrations)
 - Deploy: README "Deploy to Azure" (new Container App revision with the `sha-` image tag).
-- Never run `python -m jobpilot.azure_firewall` or touch Azure resources without the owner.
+- Never run `python -m jobpilot.azure_firewall` or touch Azure or Power Platform resources without the owner.
 - Stop the database: `docker compose down` (add `-v` only to wipe the data)
 
 ## Workflow (agents in .claude/agents/)
@@ -37,7 +38,7 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 2. **implementer**: carries out one approved step at a time.
 3. **test-writer**: adds tests for edge cases, or before a refactor.
 4. **reviewer**: reviews the diff before each commit.
-5. **docs-writer**: updates the README and learning log, and drafts CV bullets, at the end of each feature.
+5. Power Platform custom connector + Power Automate daily Telegram alert over the deployed API ✓; Copilot Studio agent configured, blocked on credits (runbook docs/COPILOT_STUDIO.md) ← current
 
 Keep each change small enough to review in 5 minutes.
 

@@ -17,7 +17,7 @@
 - [ ] Start Docker Desktop, then run `docker compose up -d` and `docker compose ps`. `db` should show "healthy".
 - [ ] Open a SQL shell: `docker compose exec db psql -U jobs -d jobs`, type `\dt` (you should see 3 tables), then `\q`.
 - [ ] Run `python -m pytest -q`. You should see 27 passed.
-- [ ] Create an empty **private** GitHub repo called `jobpilot`. Before making it public, remove personal details from `COPILOT_AGENT_SETUP.md`.
+- [ ] Create an empty **private** GitHub repo called `jobpilot`. Before making it public, remove personal details from `COPILOT_AGENT_SETUP.md` (now archived locally in `docs/archive/` and git-ignored).
 - [ ] First commit (ask Claude: "use the reviewer agent, then commit").
 
 ## Your first agent-driven feature: load jobs into Postgres
