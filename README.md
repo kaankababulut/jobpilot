@@ -1,6 +1,6 @@
 # JobPilot: daily job searcher
 
-JobPilot collects internship and entry-level tech jobs every day, scores how well each one fits my CV, and tracks which skills are in demand. The data lands in Excel, in a local PostgreSQL database and in a PostgreSQL database on Azure. A read-only FastAPI service, deployed on Azure Container Apps over HTTPS, exposes it to tools and LLM agents. Tested with pytest and GitHub Actions CI; runs on Azure free tiers with a $5/month budget alert.
+JobPilot collects internship and entry-level tech jobs every day, scores how well each one fits my CV, and tracks which skills are in demand. The data lands in Excel, in a local PostgreSQL database and in a PostgreSQL database on Azure. A read-only FastAPI service, deployed on Azure Container Apps over HTTPS, exposes it to tools and LLM agents. A Power Platform custom connector and a scheduled Power Automate flow send the day's best matches to Telegram. Tested with pytest and GitHub Actions CI; runs on Azure free tiers with a $5/month budget alert.
 
 Every day at **12:00**, Windows Task Scheduler ("Daily LinkedIn Job Search") runs `job_searcher.py` on my PC:
 
@@ -9,7 +9,7 @@ Every day at **12:00**, Windows Task Scheduler ("Daily LinkedIn Job Search") run
    - Himalayas.app (free API): remote jobs that explicitly accept applicants living in Türkiye (last 72h, only new ones).
    - If every source fails with a network error (e.g. Wi-Fi not ready yet after the PC wakes), it waits 120 s and tries again, up to 3 rounds.
 2. Drops senior, non-tech and non-remote postings, internship mills (unpaid, pay-to-join, certificate-as-pay) and job aggregators. Marks each job **Open To You? Yes/No**: on LinkedIn, a remote job listed under a country usually means you must live there. Then it detects the skills each posting asks for and compares them with `cv_skills`.
-3. Writes `output/daily/jobs_YYYY-MM-DD.xlsx` and updates `output/job_market_master.xlsx` (last 30 days, for the Copilot agent).
+3. Writes `output/daily/jobs_YYYY-MM-DD.xlsx` and updates `output/job_market_master.xlsx` (last 30 days).
 4. Loads the same 30-day window into the local **PostgreSQL** database.
 5. Points the Azure firewall rule at today's home IP, then loads the same window into **Azure PostgreSQL**.
 
@@ -33,7 +33,13 @@ flowchart LR
     API -- SELECT-only role --> Z
     GH[GitHub Actions] -- image sha-tag --> R[ghcr.io]
     R --> API
-    API -- X-API-Key --> C[Clients: scripts,<br/>later Copilot Studio and agents]
+    API -- X-API-Key --> C[Scripts]
+    subgraph PP[Microsoft Power Platform]
+        CC[Custom connector<br/>JobPilot] --> FL[Power Automate flow<br/>daily 13:30]
+        CC --> AG[Copilot Studio agent<br/>configured, not live]
+    end
+    API -- X-API-Key --> CC
+    FL -- HTTP POST --> TG[Telegram]
 ```
 
 | File | Purpose |
@@ -52,9 +58,11 @@ flowchart LR
 | `Dockerfile`, `.dockerignore` | The API container image (whitelist: only `jobpilot/` and `requirements-api.txt` go in) |
 | `requirements-api.txt` | The API's dependencies, pinned exactly; `requirements.txt` includes it |
 | `docs/openapi.json` | Snapshot of the API contract; a test fails if the API drifts from it |
+| `jobpilot/openapi2.py`, `docs/openapi-v2.json` | Converts the contract to Swagger 2.0 for the Power Platform connector; snapshot-tested too |
 | `.github/workflows/ci.yml` | CI: tests, migrations on a fresh database, database tests; on `main` also builds the image |
-| `COPILOT_AGENT_SETUP.md` | Agent instructions and setup steps |
-| `learning_log.md` | Track new skills; upload it to the agent |
+| `docs/COPILOT_STUDIO.md` | Runbook for the connector, the daily Telegram alert and the Copilot Studio agent |
+| `docs/step5/agent_instructions.md` | The agent's instructions and 10 test questions |
+| `learning_log.md` | Skills practised, with evidence |
 
 - **Cost:** about $0.40–0.45 of Apify credit per run (~$12–14/month); Himalayas is free. The Apify free plan's $5/month runs out after ~11 days, then runs fail until next month (no surprise charges on the free plan). To stay within $5, lower `limit_per_search` in `regions`, e.g. Worldwide 10, EU 10, Türkiye 15. Azure costs: see [Deploy to Azure](#deploy-to-azure).
 - **Token:** read from the `APIFY_TOKEN` user environment variable.
@@ -164,7 +172,7 @@ Never type or paste a password into psql's hidden prompt (`\password`) through `
 1. Create a key straight onto the clipboard, without printing it:
    `python -c "import secrets, subprocess; subprocess.run('clip', input=secrets.token_urlsafe(32), text=True, check=True)"`
 2. Container App → **Secrets** → `api-key` → Edit → paste → Save.
-3. Paste the same value into `.env` as `JOBPILOT_CLOUD_API_KEY` (and later into any Copilot Studio connector).
+3. Paste the same value into `.env` as `JOBPILOT_CLOUD_API_KEY` (and edit the connection `JobPilot Cloud` in Power Platform).
 4. Container App → **Revisions and replicas** → active revision → **Restart**. The old key now gets 401.
 
 **Rotate the `jobpilot_api` password.** The script sets a random password through the admin connection and puts the new API database URL on the clipboard. From home, so the firewall lets you in (run `python -m jobpilot.azure_firewall` first if your IP changed). The old password stops working at once, so do all steps in one go.
@@ -235,9 +243,20 @@ The home IP changes almost daily, and Azure's firewall silently drops connection
 - **Test it (from home):** `python -m jobpilot.azure_firewall`. It prints one line and exits 0 when the database is reachable.
 - **Secret expired** (the log says "client secret expired"): Entra ID → App registrations → `jobpilot-firewall-updater` → Certificates & secrets → New client secret → copy the **Value** into `.env` as `AZURE_CLIENT_SECRET` → delete the old secret → set a calendar reminder for the new expiry date.
 
+## Microsoft Power Platform (step 5)
+
+At 13:30 every day, a Power Automate flow checks that today's load reached the database, then sends my best new open matches (score 70+, up to 10) to Telegram. It calls the live API through a custom connector; the API key sits once in an encrypted connection.
+
+- **Connector:** imported from `docs/openapi-v2.json` (Swagger 2.0, generated by `python -m jobpilot.openapi2 --write`), API key in the `X-API-Key` header, 5 actions.
+- **Flow "JobPilot daily alert":** `health` warm-up → `recent_runs` → is today's daily load there? → `list_jobs` → Telegram message (or "load missing" / "no new matches").
+- **Copilot Studio agent "JobPilot Career Assistant":** 4 connector tools, no knowledge sources, web search off. Saved but not usable yet: the environment has no credits, and I haven't linked billing on purpose.
+- **Cost:** $0 (Developer Plan, trials, Telegram).
+
+Click-by-click setup, all flow expressions, secret handling and errors: [docs/COPILOT_STUDIO.md](docs/COPILOT_STUDIO.md). The earlier Excel-based agent is archived locally (git-ignored, it holds personal details).
+
 ## Tests and CI
 
-- `python -m pytest -q`: the default suite (308 tests). No network, no Docker.
+- `python -m pytest -q`: the default suite (327 tests). No network, no Docker.
 - `python -m pytest -q -m db`: 63 database tests. They need the container running and work in a throwaway schema, so your real data is not touched. Locally they skip if the database is down.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`:
@@ -355,3 +374,19 @@ ORDER BY match_score DESC, last_seen DESC;
 - Write endpoints and multiple users or OAuth.
 - Tracking whether a job is still listed, and de-duplicating the same job across LinkedIn and Himalayas.
 - Full descriptions: they are cut at 8,000 characters, as in Excel. Revisit with embeddings in roadmap step 7.
+
+### Microsoft Power Platform (roadmap step 5)
+
+**One connector over the existing API.** The flow and the agent both use one custom connector over the deployed API, so they see exactly the data and rules every other client sees. Rejected: reading the Excel file from OneDrive (the earlier agent), which needs a school or work OneDrive and has no API key or schema.
+
+**Generate Swagger 2.0, don't hand-write it.** Power Platform imports Swagger 2.0, but FastAPI emits OpenAPI 3.1. `jobpilot/openapi2.py` converts only what the API uses (nullable fields, enums, the API-key scheme) and raises an error naming the JSON path for anything 2.0 can't express. A snapshot test fails if `docs/openapi-v2.json` drifts. Rejected: editing the spec by hand in the connector wizard, which drifts silently when an endpoint changes.
+
+**The key lives in a connection.** The API key is stored once, encrypted, in the connection `JobPilot Cloud`. The agent uses maker-provided credentials, so a chat user never sees or types a key. Rejected: a key in the flow or the instructions.
+
+**Check freshness before alerting.** The flow first asks `recent_runs` whether today's daily load exists. If not, it says so, instead of sending "no new matches" when the real problem is a failed run. A `health` call wakes the API first, and the next step runs even if that call times out.
+
+**Telegram, after several dead ends.** On a free tenant, email, Outlook.com, Teams and mobile push were restricted, retired or needed a licence; Gmail can't share a flow with a custom connector; Discord is blocked in Türkiye. A Telegram bot takes one HTTP POST. The token is in the URL, so Secure Inputs hide it from the run history.
+
+**Tools, not knowledge, for the agent.** The agent has 4 tools and no knowledge sources or web search, and its instructions forbid naming any job or skill a tool didn't return. Every answer can then be checked against tool output. Rejected: uploading the Excel file as knowledge, which goes stale and can't be filtered.
+
+**No paid plan for the agent.** The trial environment has no credits, so the agent can't answer yet. I didn't link pay-as-you-go billing for a portfolio demo. The same API and test questions carry over to the custom Claude agent in roadmap step 8.

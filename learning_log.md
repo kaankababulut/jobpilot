@@ -1,6 +1,6 @@
 # Learning Log – Kaan Kababulut
 
-Add a line whenever you finish learning a skill or building a project. Upload this file to your Copilot agent's Knowledge next to the CV, so it knows what you've learned since the CV was written.
+Add a line whenever you finish learning a skill or building a project, with the evidence (file or commit).
 When a skill here is solid enough to go on your CV, also add it to `cv_skills` in config.json, so the daily Match Scores reflect it.
 
 | Date | Skill / Project | What I built or did | Evidence (GitHub link, certificate) | On CV yet? |
@@ -25,6 +25,13 @@ When a skill here is solid enough to go on your CV, also add it to `cv_skills` i
 | 2026-10-03 | Docker images + CI/CD | Whitelist `.dockerignore`, non-root image, CI builds and pushes `sha-<commit>` tags to ghcr.io after tests pass on `main` | `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`, commit c4e50b6 | No |
 | 2026-10-04 | Azure Container Apps | Deployed the API (Consumption, 0.25 vCPU, min 0 / max 1 replica, HTTPS) behind a $5 budget; live checks passed | README "Deploy to Azure", PR #8 (287bafe) | No |
 | 2026-10-04 | Testing with pytest | Suite now 308 default + 63 opt-in database tests | `tests/` | No |
+| 2026-10-04 | OpenAPI 3.1 → Swagger 2.0 | Stdlib converter for the Power Platform connector: nullable → `x-nullable`, enums inlined, API-key scheme kept, error on anything 2.0 can't express; snapshot of `docs/openapi-v2.json`; 19 tests | `jobpilot/openapi2.py`, `tests/test_openapi2.py`, commit 68ad15e (PR #10, merge cc9875e) | No |
+| 2026-10-05 | Entra ID user admin | Work user in my own tenant (Copilot Studio rejects personal accounts), MFA with Authenticator, separate Edge profile | `docs/COPILOT_STUDIO.md` §1 | No |
+| 2026-10-05 | Power Platform custom connector | Imported the 2.0 spec, API key in `X-API-Key` header, encrypted connection, 5 actions, inside solution `JobPilot`; fixed the "gateway cannot be null" 500 | `docs/COPILOT_STUDIO.md` §2–3 | No |
+| 2026-10-05 | Power Automate (scheduled flow) | "JobPilot daily alert": warm-up with run-after, freshness check on `recent_runs`, `list_jobs`, Select + `join`, two conditions, three messages; runs daily at 13:30 | `docs/COPILOT_STUDIO.md` §5 | No |
+| 2026-10-05 | HTTP / Telegram Bot API | Bot via @BotFather; `sendMessage` POST from the flow with Secure Inputs, after the managed notification connectors failed | `docs/COPILOT_STUDIO.md` §4–5 | No |
+| 2026-10-05 | Copilot Studio (generative orchestration) | Agent "JobPilot Career Assistant": 4 connector tools, no knowledge, web search off, grounded instructions, 10 test questions. Saved; not yet runnable (environment out of credits) | `docs/COPILOT_STUDIO.md` §6, `docs/step5/agent_instructions.md` | No |
+| 2026-10-05 | Testing with pytest | Suite now 327 default + 63 opt-in database tests | `tests/` | No |
 
 ## 2026-10-01: Postgres loader (roadmap step 2)
 
@@ -111,3 +118,38 @@ When a skill here is solid enough to go on your CV, also add it to `cv_skills` i
 - *How did you make the cloud load faster?* Measured first: 4 minutes for 339 jobs, because each job needed about 4 round trips to a remote server. Pipelined `executemany` and one `unnest` insert brought it to about 16 round trips per batch: 19 s for 389 jobs, with the same per-row logic and tests.
 - *How do you deploy and roll back?* Merge to `main`, CI builds `sha-<commit>`, and I create a new revision with that tag in the portal. Rollback is a new revision with the previous tag. I left out automatic deploys (OIDC) because I deploy rarely and it's another identity to secure.
 - *What would you change for a real production system?* Private networking, a separate writer role for the loader, Key Vault, automated deploys, stored logs with alerts, and rate limiting or API Management.
+
+## 2026-10-05: Microsoft Power Platform (roadmap step 5)
+
+**What I built.** A Power Platform custom connector over my live API, and a scheduled Power Automate flow that checks today's load and sends my best new open matches (score 70+, up to 10) to Telegram every day at 13:30. It works: the list arrives daily. I also configured a Copilot Studio agent with 4 tools from the same connector and grounded instructions. It is saved but can't answer yet: the environment is out of credits, and I chose not to link billing. Cost: $0. Runbook: `docs/COPILOT_STUDIO.md`.
+
+**Key concepts in plain words**
+- **Custom connector and connection.** The connector describes the API (actions, parameters, auth) from an OpenAPI file. A connection is one signed-in instance of it, holding my API key encrypted. Flows and agents point at the connection, so the key is entered once and never appears in them.
+- **Swagger 2.0 vs OpenAPI 3.1.** Two versions of the same API-description format. FastAPI writes 3.1; Power Platform imports only 2.0. 2.0 has no `anyOf`, so "string or null" becomes `x-nullable`, and parameters can't reference shared enums, so the values are copied in. My converter refuses anything it can't translate faithfully, rather than producing a connector that lies about the API.
+- **Solutions.** A container for Power Platform parts (connector, flow, agent) with a publisher prefix (`kaan`). It lets them be exported and moved between environments together, like a package.
+- **Scheduled flows and time zones.** A recurrence trigger with an explicit time zone. Istanbul isn't in the list, so I used another UTC+3 zone; Türkiye has no daylight saving, so the time never drifts.
+- **Run after.** By default a step runs only if the previous one succeeded. "Run after: failed, timed out" lets the flow carry on after a warm-up call that hit a cold start.
+- **Expressions vs dynamic content.** Dynamic content is a value picked from an earlier step; an expression is a formula like `first(body('recent_runs')?['items'])?['run_date']`. Typed as plain text, a "formula" is just a string, which is why my condition was always false.
+- **Secure Inputs.** Hides a step's inputs in the run history. Needed because the Telegram token is in the URL. It doesn't hide the flow definition, so an exported solution is still secret.
+- **Webhooks / HTTP action.** Many services take a plain HTTPS POST with a JSON body. Telegram's `sendMessage` is one; the generic HTTP action replaced all the blocked notification connectors.
+- **Generative orchestration vs topics.** Topics are hand-built conversation trees triggered by phrases. Generative orchestration lets the model read the tool descriptions and decide which tools to call. That's why the API's `operation_id`s and descriptions were written for LLMs in step 3.
+- **Grounding on tools vs knowledge.** Knowledge means uploaded files or websites the agent searches. Tools are live API calls. With tools only and web search off, every fact in an answer has to come from a tool output I can check.
+- **Licences vs credits.** A licence (or trial) lets a user build in Copilot Studio. Credits pay for each message the agent answers. I had a trial, so saving worked, but no credits, so the chat didn't.
+- **Tenant restrictions.** New and free tenants have some connectors switched off or licensed (Mail, Office 365 Outlook, Teams). What works on a company tenant may not work on a fresh one.
+
+**Lessons from dead ends**
+- A private window blocked third-party cookies and silently hid the connector's actions. A separate browser profile keeps the work user apart and the designer working.
+- One wrong tickbox ("Connect via on-premises data gateway") made every call fail instantly with a 500 from `gatewayconnector`. The source field in the error pointed at the cause. The fix also needed a new connection, because the old one kept the setting.
+- The notification routes failed one by one: Mail (restricted for new tenants), Outlook.com (Unauthorized), mobile push (app retired on 31 Aug 2026), Office 365 Outlook and Teams (licence), Discord (blocked in Türkiye), Gmail (can't share a flow with a custom connector). The generic HTTP action to Telegram worked. Lesson: when the managed connectors are closed, check whether the target has a plain HTTP API.
+- "User license not found" meant the Copilot Studio trial had never actually started; it had to be started from the pricing page.
+- Credits are a separate gate from licences. I stopped there instead of linking a card for a demo.
+
+**Interview questions**
+- *How did you connect Power Platform to your own API?* A custom connector imported from a Swagger 2.0 file that my code generates from the FastAPI spec. It uses API-key auth in the `X-API-Key` header, and the key sits in one encrypted connection that the flow and the agent share.
+- *Why did you write a converter instead of editing the spec by hand?* A hand-edited copy drifts the next time an endpoint changes. The converter is tested, a snapshot test catches drift, and it fails with the exact JSON path on anything 2.0 can't express, so a bad connector never gets built silently.
+- *What does your flow do if the morning job didn't run?* It reads `recent_runs` first. If the newest load isn't today's daily run, it sends "today's load is missing" instead of "no new matches", so a broken pipeline doesn't look like a quiet day.
+- *How do you handle the API's cold start in the flow?* A `health` call wakes it, with no retries, and the next step is set to run after success, failure or timeout. `health` doesn't touch the database, so it's cheap.
+- *Where are the secrets?* API key: `.env` and the encrypted connection. Telegram token: `.env` and the HTTP URL with Secure Inputs on, so run history doesn't show it. Never in the docs, the agent instructions or a screenshot of the connector's Test tab.
+- *Why Telegram and not email or Teams?* On a free tenant, Mail was restricted, Outlook.com was unauthorized, Teams and Office 365 Outlook need a licence, and the mobile app was retired. Telegram's bot API is one HTTPS POST and free.
+- *How do you stop the Copilot Studio agent from hallucinating jobs?* No knowledge sources, web search off, only 4 read-only tools, and instructions that forbid naming any job or skill a tool didn't return. Ten test questions include a probe for a job that doesn't exist and a request for the API key.
+- *Is the agent live?* No. It's configured and saved, but the environment has no credits, and I decided not to link pay-as-you-go billing for a portfolio demo. The same API and test questions carry over to a custom Claude agent in step 8 and to the evals in step 9.
