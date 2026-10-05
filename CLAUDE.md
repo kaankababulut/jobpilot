@@ -59,4 +59,4 @@ One read-only HTTPS API serves every consumer (Copilot Studio, Power Automate, P
 9. Agent evals (quality, hallucinated skills, cost per query), incl. Copilot Studio vs custom agent
 10. Polish; React/Next.js frontend only if targeting frontend roles
 
-Owner context: GitHub repo is private; no student email, so Azure uses the free account (card) with a budget alert from day one.
+Owner context: the GitHub repo is public (portfolio) since 2026-10-05, so never commit secrets, IDs, chat ids, phone numbers or home IPs; run a secrets scan before every push. Azure uses the free account (card) with a $5 budget alert.
