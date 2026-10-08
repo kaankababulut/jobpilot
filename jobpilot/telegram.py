@@ -114,7 +114,7 @@ def _parse_command(text: str) -> Action | None:
     if not words:
         return None
     head, rest = words[0], words[1] if len(words) == 2 else ""
-    command, _, _bot = head.partition("@")  # "/apps@jobpilot_kaan_bot": the suffix Telegram adds in menus
+    command, _, _bot = head.partition("@")  # "/apps@example_bot": the suffix Telegram adds in menus
     command, rest = command.lower(), rest.strip()
     if command in ("/start", "/help"):
         return Help()

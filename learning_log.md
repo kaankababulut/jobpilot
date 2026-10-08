@@ -32,6 +32,13 @@ When a skill here is solid enough to go on your CV, also add it to `cv_skills` i
 | 2026-10-05 | HTTP / Telegram Bot API | Bot via @BotFather; `sendMessage` POST from the flow with Secure Inputs, after the managed notification connectors failed | `docs/COPILOT_STUDIO.md` §4–5 | No |
 | 2026-10-05 | Copilot Studio (generative orchestration) | Agent "JobPilot Career Assistant": 4 connector tools, no knowledge, web search off, grounded instructions, 10 test questions. Saved; not yet runnable (environment out of credits) | `docs/COPILOT_STUDIO.md` §6, `docs/step5/agent_instructions.md` | No |
 | 2026-10-05 | Testing with pytest | Suite now 327 default + 63 opt-in database tests | `tests/` | No |
+| 2026-10-08 | Schema design: tracker tables | Migration 004: `feedback` (one label per job, latest wins), `applications` with a partial unique index on `job_id`, `application_events`, and the `labelled_jobs` view as the eval set | `db/migrations/004_feedback_applications.sql`, commit 404e497 | No |
+| 2026-10-08 | Database security (writer role) | `jobpilot_feedback`: SELECT/INSERT/UPDATE on three tables, read on `jobs`, no DELETE, connection limit 3, NOLOGIN until a password is set | `db/migrations/004_feedback_applications.sql`, commit 404e497 | No |
+| 2026-10-08 | Webhooks / Telegram Bot API | `POST /telegram/webhook`: secret header, owner-only, 1 MB cap, replies in the response body (no bot token on the server), 503/504 vs 200 for Telegram's retries | `jobpilot/telegram.py`, `jobpilot/telegram_webhook.py`, commits 2583a0a, 270cca3 | No |
+| 2026-10-08 | Idempotent writes | Labels, ✅ and status changes are safe to repeat, so Telegram's retries can't duplicate rows or history | `jobpilot/feedback.py`, commits e26de10, 270cca3 | No |
+| 2026-10-08 | FastAPI (read endpoint) | `GET /applications` with status/open filters and paging; `recorded_via` instead of a second meaning of `source`; contracts regenerated | `jobpilot/api.py`, `jobpilot/queries.py`, commit c12d441 | No |
+| 2026-10-08 | Data import / ETL | One-off spreadsheet import: natural-key duplicates skipped, LinkedIn ids matched to jobs, dry run as a rolled-back transaction | `jobpilot/import_applications.py`, commit b103fdc | No |
+| 2026-10-08 | Testing with pytest | Suite now 546 default + 120 opt-in database tests | `tests/` | No |
 
 ## 2026-10-01: Postgres loader (roadmap step 2)
 
@@ -153,3 +160,34 @@ When a skill here is solid enough to go on your CV, also add it to `cv_skills` i
 - *Why Telegram and not email or Teams?* On a free tenant, Mail was restricted, Outlook.com was unauthorized, Teams and Office 365 Outlook need a licence, and the mobile app was retired. Telegram's bot API is one HTTPS POST and free.
 - *How do you stop the Copilot Studio agent from hallucinating jobs?* No knowledge sources, web search off, only 4 read-only tools, and instructions that forbid naming any job or skill a tool didn't return. Ten test questions include a probe for a job that doesn't exist and a request for the API key.
 - *Is the agent live?* No. It's configured and saved, but the environment has no credits, and I decided not to link pay-as-you-go billing for a portfolio demo. The same API and test questions carry over to a custom Claude agent in step 8 and to the evals in step 9.
+
+## 2026-10-08: Application tracker (roadmap step 5, follow-up)
+
+**What I built.** The Telegram chat that gets the daily alert now also writes. Each job gets 👍 / 👎 / ✅ (applied) buttons, and `/apps`, `/s` and `/add` commands track my applications, replacing the spreadsheet I kept by hand. Taps and commands go to `POST /telegram/webhook` on the deployed API, which writes to Azure PostgreSQL through a new writer role. `GET /applications` gives the connector and the agent read access, and a one-off import loads the old spreadsheet. The `labelled_jobs` view is the start of the eval set for the match score. The code is done and tested; the cloud setup is a runbook (`docs/AZURE_DEPLOY.md` → Tracker setup) I still have to run.
+
+**Key concepts in plain words**
+- **Webhook vs polling.** Polling (`getUpdates`) means my code asks Telegram "anything new?" again and again. A webhook means Telegram calls my URL when something happens. The API already runs on HTTPS, so a webhook needs nothing extra running. A bot uses one or the other, not both.
+- **Replying in the response body.** Telegram lets the webhook answer with a Bot API call, and Telegram runs it. My server never calls Telegram, so it never needs the bot token.
+- **Shared secret header.** `setWebhook` registers a secret; Telegram sends it back on every call in `X-Telegram-Bot-Api-Secret-Token`. Anyone can find the URL, but without the secret they get 401. The check runs before the body is read.
+- **Authentication vs authorisation.** The secret proves the call comes from Telegram. The owner id proves the message comes from me. Anyone can message a bot, so both are needed.
+- **Callback queries and inline keyboards.** Buttons under a message carry a short `callback_data` string (`u:`, `d:`, `a:` plus the job id, at most 64 bytes). A tap arrives as a callback query, and the app must answer it with `answerCallbackQuery`, or the button keeps spinning.
+- **Retries and poison messages.** Telegram resends an update whenever the answer isn't 2xx. That's good for a temporary problem (database down: 503/504) and bad for an update that will always fail, which would come back forever. That one gets 200 and a log line.
+- **Idempotency makes retries safe.** Because a retry can deliver the same tap twice, every write is safe to repeat: a label is "latest wins", ✅ hits a unique key, a repeated status without a note writes nothing.
+- **Least privilege for a writer.** A second database role that can write only the tracker tables, can't `DELETE` and has at most 3 connections. The API's role stays SELECT-only, so the "read-only in three layers" rule still holds for every other endpoint.
+- **Identity columns vs SERIAL.** `GENERATED ALWAYS AS IDENTITY` takes ids from an internal sequence that Postgres doesn't permission-check on `INSERT`, so the writer role needs no sequence grant. With `SERIAL` it would.
+- **Partial unique index.** `UNIQUE (job_id) WHERE job_id IS NOT NULL`: a JobPilot job can be applied to once, while many applications made elsewhere have no job at all.
+- **`ON CONFLICT DO NOTHING` without a target.** It covers every unique key on the table, so one statement handles both duplicate rules.
+- **A dry run as a rolled-back transaction.** The import does the real work in one transaction and, with `--dry-run`, rolls it back. The counts are the real ones and nothing is written.
+- **Labels and selection bias.** I only label jobs the alert shows me (score 70+), so my labels lean towards high scores. Not applying isn't a 👎. An eval built on this set has to keep that in mind.
+- **Validating input.** `int()` accepts `1_000`, ` -5` and non-ASCII digits, so ids are checked with a regex first. In Python `True == 1`, so the owner check also rejects booleans.
+- **Body size caps.** `Content-Length` can lie or be missing, so the route also counts bytes as they arrive and stops at 1 MB (413).
+
+**Interview questions**
+- *How does your bot know a request really comes from Telegram, and from you?* Telegram sends the secret I registered with `setWebhook` in a header, compared in constant time before the body is read. Then only updates from my user id, in a private chat, turn into an action. If either setting is missing, the route answers 503 instead of running open.
+- *Your API was read-only. How did you add writes without breaking that?* One hidden route, with its own database URL and its own role. That role can write three tracker tables and read `jobs`; it can't delete anything or touch `jobs`. Every other endpoint still uses the SELECT-only role and read-only sessions.
+- *Where is the bot token?* Not on the server. The webhook returns its reply as a Bot API call in the response body, and Telegram executes it. The token stays in `.env` and the flow's HTTP actions with Secure Inputs.
+- *What happens if the database is down when you tap a button?* The webhook answers 503 and Telegram retries later. Because the writes are idempotent, a retry can't create a duplicate.
+- *Why not always return 200?* Then a temporary database outage would lose the tap. And always returning an error would make one bad update come back forever. So: 503/504 for "try again", 200 for "don't".
+- *How would you use the labels?* `labelled_jobs` is the eval set: did the match score rank my 👍 jobs above my 👎 jobs? `score_at_label` keeps the old score, so a new scorer can be compared with it. The bias is that I only label high-scoring jobs, so I'd also label a sample of low-scoring ones.
+- *How did you import the old spreadsheet safely?* Duplicates are defined by natural keys (company, title, applied date; or the matched job), so a re-run skips what's there and never overwrites a newer status. A dry run executes the same SQL and rolls back, so I could check the counts before writing.
+- *Why is the field called `recorded_via` in the API?* In `/jobs`, `source` means the job board. Two meanings of one name would confuse an LLM tool, so the API renames it; the table keeps its name because applied migrations are never edited.

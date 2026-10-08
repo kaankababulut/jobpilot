@@ -2,17 +2,20 @@
 
 **Status (2026-10-05):** the custom connector and the daily Telegram alert work; the job list arrives every day. The Copilot Studio agent is configured and saved, but the test chat is blocked by "This environment is out of credits". Cost so far: $0.
 
+**Update (2026-10-08):** the application tracker is coded: 👍/👎/✅ buttons in the alert and `/apps`, `/s`, `/add` commands, handled by the API's Telegram webhook. Setup: [AZURE_DEPLOY.md → Tracker setup](AZURE_DEPLOY.md#tracker-setup), then [section 7](#7-tracker-buttons-in-the-daily-alert).
+
 ```mermaid
 flowchart LR
     API[JobPilot API<br/>Azure Container Apps] -- X-API-Key --> CC[Custom connector<br/>JobPilot]
     CC --> FL[Power Automate flow<br/>daily 13:30]
     FL -- HTTP POST --> TG[Telegram bot]
+    TG -- button taps, commands --> API
     CC --> AG[Copilot Studio agent<br/>4 tools, blocked: credits]
 ```
 
 Everything in Microsoft's cloud reaches the data through one custom connector over the deployed, read-only API. That's why the API went to Azure first: Microsoft's cloud can't call localhost.
 
-Contents: [1 Identity](#1-identity-a-work-user-and-a-separate-browser-profile) · [2 Environment](#2-environment-and-solution) · [3 Connector](#3-custom-connector) · [4 Telegram bot](#4-telegram-bot) · [5 Flow](#5-flow-jobpilot-daily-alert) · [6 Agent](#6-copilot-studio-agent) · [Costs](#costs) · [Secrets](#secret-handling) · [Troubleshooting](#troubleshooting)
+Contents: [1 Identity](#1-identity-a-work-user-and-a-separate-browser-profile) · [2 Environment](#2-environment-and-solution) · [3 Connector](#3-custom-connector) · [4 Telegram bot](#4-telegram-bot) · [5 Flow](#5-flow-jobpilot-daily-alert) · [6 Agent](#6-copilot-studio-agent) · [7 Tracker buttons](#7-tracker-buttons-in-the-daily-alert) · [Costs](#costs) · [Secrets](#secret-handling) · [Troubleshooting](#troubleshooting)
 
 ## 1. Identity: a work user and a separate browser profile
 
@@ -33,7 +36,7 @@ FastAPI emits OpenAPI 3.1; Power Platform imports Swagger 2.0. `python -m jobpil
 1. Solution `JobPilot` → **New** → **Automation** → **Custom connector** → **Import an OpenAPI file** → `docs/openapi-v2.json` → name `JobPilot`.
 2. **General:** host and base URL come from the file (the live API, `https`). **Leave "Connect via on-premises data gateway" unticked** (see [Troubleshooting](#troubleshooting)).
 3. **Security:** API Key, parameter label `X-API-Key`, parameter name `X-API-Key`, location **Header**.
-4. **Definition:** check there are 5 actions: `health`, `list_jobs`, `get_job`, `top_skills`, `recent_runs`.
+4. **Definition:** check there are 6 actions: `health`, `list_jobs`, `get_job`, `top_skills`, `recent_runs`, `list_applications` (the last one since the tracker; an older connector has 5, see [section 7](#7-tracker-buttons-in-the-daily-alert)).
 5. **Create connector**, then **Test** → **New connection** → paste the cloud API key (`JOBPILOT_CLOUD_API_KEY` in `.env`) → name the connection `JobPilot Cloud`. The key is stored once, encrypted, in the connection; flows and the agent reference the connection, never the key.
 6. Test `health` (no key needed), then `recent_runs`. Both should answer 200. The first call after an idle period can be slow: the API scales to zero.
 
@@ -96,6 +99,53 @@ Test with **Test** → **Manually**. Expected: one Telegram message, and every s
 ### Current blocker: credits
 
 The test chat answers "This environment is out of credits" (error code `EnforcementUsageCredits`). No billing plan or pay-as-you-go subscription is linked, on purpose. Next: ask a Microsoft-partner contact about credit allocation or a demo tenant. If that doesn't work, the AI agent is built in roadmap step 8 (Claude tool use) over the same API, and the [test questions](step5/agent_instructions.md#test-questions) carry over to the step 9 evals.
+
+## 7. Tracker buttons in the daily alert
+
+Each job in the alert gets a row of three buttons: 👍, 👎 and ✅ (applied). A tap goes from Telegram straight to the API's webhook (`POST /telegram/webhook`), not through the flow. Do this edit after the webhook is set up ([AZURE_DEPLOY.md → Tracker setup](AZURE_DEPLOY.md#tracker-setup)); before that, taps go nowhere.
+
+**Callback data.** Each button carries a short string that the webhook parses (`jobpilot/telegram.py`): `u:<job_id>` for 👍, `d:<job_id>` for 👎, `a:<job_id>` for ✅. `<job_id>` is the `id` field from `list_jobs`, with no leading zero and nothing else around it. Anything else is ignored. Telegram's limit is 64 bytes per button, far more than this needs.
+
+**Edit the flow.** In the 8-yes branch:
+
+1. Change the existing **Select** so each line starts with the job id, which the buttons show too:
+   `concat('#', item()?['id'], ' • ', item()?['match_score'], ' · ', item()?['title'], ' @ ', coalesce(item()?['company'],'?'), ' ', item()?['apply_url'])`
+2. Add a second **Select**, named `keyboard`, after it. From: `body('list_jobs')?['items']`. Switch Map to **text mode** and enter this expression, which builds one row of three buttons per job:
+
+   ```
+   createArray(
+     json(concat('{"text":"👍 #', string(item()?['id']), '","callback_data":"u:', string(item()?['id']), '"}')),
+     json(concat('{"text":"👎 #', string(item()?['id']), '","callback_data":"d:', string(item()?['id']), '"}')),
+     json(concat('{"text":"✅ #', string(item()?['id']), '","callback_data":"a:', string(item()?['id']), '"}'))
+   )
+   ```
+
+   The output, `body('keyboard')`, is an array of rows: exactly Telegram's `inline_keyboard` shape. Building the JSON from strings is safe here because the id is a number; the job title stays in the message text, which `addProperty` escapes.
+3. In the HTTP action that sends the list, add `reply_markup` to the body expression:
+   `addProperty(addProperty(addProperty(json('{}'),'chat_id',<chat_id>),'text',<text>),'reply_markup',addProperty(json('{}'),'inline_keyboard',body('keyboard')))`
+
+   The other two messages ("today's load is missing", "no new matches") have no jobs, so they stay as they are.
+
+The body Telegram receives, for two jobs (placeholder ids):
+
+```json
+{
+  "chat_id": <chat_id>,
+  "text": "Today's best matches:\n#101 • 85 · Data Intern @ ExampleCo https://...\n#102 • 72 · Junior Developer @ ? https://...",
+  "reply_markup": {
+    "inline_keyboard": [
+      [{"text": "👍 #101", "callback_data": "u:101"}, {"text": "👎 #101", "callback_data": "d:101"}, {"text": "✅ #101", "callback_data": "a:101"}],
+      [{"text": "👍 #102", "callback_data": "u:102"}, {"text": "👎 #102", "callback_data": "d:102"}, {"text": "✅ #102", "callback_data": "a:102"}]
+    ]
+  }
+}
+```
+
+Test with **Test** → **Manually**: the list arrives with 10 rows of buttons at most. A tap shows a short toast: "Saved 👍", "Saved 👎", "Marked as applied ✅" or "Already applied". A spinner that never stops means the webhook didn't answer: see the end of the Tracker setup runbook.
+
+**Commands.** In the same chat: `/apps` lists open applications, `/s <id> <status> [note]` updates one (statuses: applied, assessment, interview, offer, rejected, withdrawn), `/add Company | Title | URL` tracks an application made elsewhere (URL optional), `/help` shows the list. The `<id>` in `/s` is the application number from `/apps`, not the job id.
+
+**For the agent.** After the connector update (Tracker setup step e) there is a sixth action, `list_applications` (filters `status` and `open`). In Copilot Studio → `JobPilot Career Assistant` → **Tools** → **Add a tool** → **Connector** → `JobPilot` → `list_applications`, with the same maker-provided `JobPilot Cloud` connection. It is read-only, like the other tools, so the agent can answer "which applications are still open?" but can't change anything. Its `recorded_via` field says how a row was recorded; `source` in `list_jobs` is the job board.
 
 ## Costs
 

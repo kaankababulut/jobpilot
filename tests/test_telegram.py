@@ -71,10 +71,10 @@ def test_owner_check_rejects_bool():
 
 @pytest.mark.parametrize("text, action", [
     ("/start", Help()), ("/help", Help()), ("/apps", ListApps()), ("/APPS", ListApps()),
-    ("/apps@jobpilot_kaan_bot", ListApps()), ("  /apps  ", ListApps()),
+    ("/apps@example_bot", ListApps()), ("  /apps  ", ListApps()),
     ("/s 3 interview", SetStatus(3, "interview", None)),
     ("/s 3 Interview  Tuesday 10:00 ", SetStatus(3, "interview", "Tuesday 10:00")),
-    ("/s@jobpilot_kaan_bot 3 offer", SetStatus(3, "offer", None)),
+    ("/s@example_bot 3 offer", SetStatus(3, "offer", None)),
     ("/s 3\nrejected", SetStatus(3, "rejected", None)),
     ("/add Acme | Data Intern", AddApp("Acme", "Data Intern", None)),
     ("/add  Acme |Data Intern| https://acme.example/jobs/1 ", AddApp("Acme", "Data Intern", "https://acme.example/jobs/1")),

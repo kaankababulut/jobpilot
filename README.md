@@ -1,7 +1,7 @@
 # JobPilot
 
 A personal job-market platform. Every day it collects internship and junior tech jobs, scores each one against my CV and tracks which skills are in demand.
-The best new matches arrive on my phone through a Microsoft Power Platform flow, served by a read-only API on Azure.
+The best new matches arrive on my phone through a Microsoft Power Platform flow, served by an API on Azure. From the same Telegram chat I label jobs 👍/👎 and track my applications.
 
 Built by directing AI coding agents (Claude Code) through planning, review and testing; I designed the architecture and reviewed every step.
 
@@ -10,7 +10,7 @@ Built by directing AI coding agents (Claude Code) through planning, review and t
 | | |
 |---|---|
 | Jobs in the database | **487**, no duplicates |
-| Automated tests | **390** (327 default + 63 database), run in CI on every pull request |
+| Automated tests | **666** (546 default + 120 database), run in CI on every pull request |
 | Cloud load time | **4 min → 19 s** after batching database round trips |
 | Running cost | **$0/month** on Azure free tiers, with a $5 budget alert |
 
@@ -29,6 +29,7 @@ flowchart LR
     subgraph AZ["Azure"]
         Z[("Azure PostgreSQL<br/>Flexible Server")]
         API["FastAPI on<br/>Container Apps, HTTPS"]
+        WH["POST /telegram/webhook<br/>(same app)"]
     end
     subgraph PP["Microsoft Power Platform"]
         CC["Custom connector"]
@@ -41,7 +42,9 @@ flowchart LR
     CC -- "X-API-Key" --> API
     CC --> FL
     CC --> AG
-    FL --> TG["Telegram"]
+    FL -- "matches + 👍/👎/✅ buttons" --> TG["Telegram"]
+    TG -- "taps, /apps /s /add<br/>(secret header)" --> WH
+    WH -- "jobpilot_feedback role<br/>(tracker tables only)" --> Z
     GH["GitHub Actions"] -- "tested image via ghcr.io" --> API
 ```
 
@@ -50,16 +53,17 @@ flowchart LR
 3. **Store.** It writes the daily and 30-day Excel files, then upserts the same 30-day window into the local PostgreSQL database and into Azure PostgreSQL. Each load fails safe on its own: a database outage logs one warning and the run carries on.
 4. **Serve.** A read-only FastAPI service on Azure Container Apps exposes the data over HTTPS with an API key. It logs in as a SELECT-only database role.
 5. **Notify.** At 13:30 a Power Automate flow calls the API through a custom connector, checks that today's load arrived and sends my best new matches (score 70+, up to 10) to Telegram.
+6. **Track.** Each job in the alert has 👍 / 👎 / ✅ (applied) buttons. A tap goes to the API's webhook, which checks Telegram's secret header and my user id, then writes to Azure PostgreSQL as `jobpilot_feedback`, a role that can only write the tracker tables. Commands in the same chat: `/apps` (open applications), `/s <id> <status> [note]` (update one), `/add Company | Title | URL` (an application made elsewhere). `GET /applications` serves the tracker to the connector, and the `labelled_jobs` view collects every label as the future eval set for the match score.
 
 ## What this project demonstrates
 
 | Area | In this repo |
 |------|--------------|
 | Data engineering | Idempotent, order-independent upserts on a natural key; numbered SQL migrations with a small tested runner; batched (pipelined) loads to a remote database; fail-safe daily loads |
-| Backend | FastAPI with API-key auth that fails closed; read-only enforced in the SQL, the session and the database role; paging; an OpenAPI contract written for LLM tools |
+| Backend | FastAPI with API-key auth that fails closed; read-only enforced in the SQL, the session and the database role; paging; an OpenAPI contract written for LLM tools; a Telegram webhook with a secret header, owner check, body cap and retry-aware status codes |
 | DevOps and cloud | Docker and Docker Compose; GitHub Actions CI with a real Postgres; immutable commit-tagged images; Azure Container Apps and managed PostgreSQL; a least-privilege Entra ID service principal; budget alert, scale to zero and a 1-replica cap |
 | Microsoft Power Platform | Custom connector imported from a generated Swagger 2.0 spec; scheduled Power Automate flow with a freshness check; Copilot Studio agent grounded only on API tools |
-| Testing | 390 pytest tests; database tests in a throwaway schema; snapshot tests that fail if the API contract drifts |
+| Testing | 666 pytest tests; database tests in a throwaway schema; snapshot tests that fail if the API contract drifts |
 
 ## Repository layout
 
@@ -73,6 +77,9 @@ flowchart LR
 | `jobpilot/migrate.py`, `db/migrations/` | Schema as numbered SQL files and the runner that applies them |
 | `jobpilot/queries.py`, `jobpilot/api.py` | The API's read-only SQL and the FastAPI app |
 | `jobpilot/openapi2.py` | Converts the OpenAPI 3.1 contract to Swagger 2.0 for Power Platform |
+| `jobpilot/feedback.py` | Tracker writes: labels, applications, status changes |
+| `jobpilot/telegram.py`, `jobpilot/telegram_webhook.py` | Telegram update parser and replies (pure); the webhook route |
+| `jobpilot/import_applications.py` | One-off import of my hand-kept applications spreadsheet |
 | `jobpilot/azure_firewall.py` | Points the Azure firewall rule at today's IP before the cloud load |
 | `docs/openapi.json`, `docs/openapi-v2.json` | API contract snapshots, checked by tests |
 | `tests/` | pytest suite (default and database tests) |
@@ -94,8 +101,8 @@ python -m jobpilot.backfill       # load Excel files from output/ (safe to re-ru
 Tests:
 
 ```bash
-python -m pytest -q               # 327 default tests: no network, no Docker
-python -m pytest -q -m db         # 63 database tests in a throwaway schema (needs the container)
+python -m pytest -q               # 546 default tests: no network, no Docker
+python -m pytest -q -m db         # 120 database tests in a throwaway schema (needs the container)
 ```
 
 API, locally:
@@ -114,6 +121,9 @@ Open <http://127.0.0.1:8000/docs>, click **Authorize** and paste the key. Withou
 | `GET /jobs/{job_id}` | yes | One job with description, red flags and skills |
 | `GET /skills` | yes | Most-demanded skills in the last `days` days, with share of jobs and `on_cv` |
 | `GET /runs` | yes | Latest database loads |
+| `GET /applications` | yes | Tracked applications, newest first; filters `status`, `open`; paging with `has_more`; `recorded_via` says how each was recorded |
+
+`POST /telegram/webhook` is hidden from the OpenAPI spec: it is Telegram's endpoint, not a tool. It needs `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_OWNER_ID` and `FEEDBACK_DATABASE_URL`; without them it answers 503.
 
 If you change an endpoint, regenerate the contracts with `python -m jobpilot.api --write` and `python -m jobpilot.openapi2 --write`.
 
@@ -127,9 +137,13 @@ The scraper itself (`python job_searcher.py`) needs an `APIFY_TOKEN` environment
 | `skills` | skill | `category`; `on_cv` refreshed from `config.json` on every load |
 | `job_skills` | job–skill pair | Skill trends are a `GROUP BY` |
 | `runs` | load | Daily or backfill; rows offered and written |
+| `feedback` | labelled job | 👍/👎, latest wins; `score_at_label` freezes the score I saw |
+| `applications` | application | Status (applied → assessment → interview → offer / rejected / withdrawn); optional `job_id`; `UNIQUE (company, title, applied_on)` |
+| `application_events` | status change | History, for "days from applied to interview" |
+| `labelled_jobs` (view) | labelled job | Explicit label, or 👍 if I applied: the eval set for later matching work |
 | `schema_migrations` | applied migration | Version, name, `applied_at` |
 
-Migration 002 adds the role `jobpilot_api`: `SELECT` on the four data tables only, read-only by default, at most 5 connections.
+Migration 002 adds the role `jobpilot_api`: `SELECT` only, read-only by default, at most 5 connections. Migration 004 adds `jobpilot_feedback`: `SELECT`, `INSERT` and `UPDATE` on the three tracker tables, read on `jobs`, no `DELETE`, at most 3 connections.
 
 ## Design decisions
 
@@ -139,7 +153,7 @@ The five I'd defend first. The full list, with what I rejected each time, is in 
 
 **Fail safe in the daily run.** Each database load is one transaction with connect and statement timeouts. On any error it rolls back, logs one line with the password redacted and returns. Excel is always written. Because every run loads the full 30-day window, a missed day fills itself the next day.
 
-**Read-only in three layers.** The API code only runs parameterised `SELECT`s; its sessions are opened read-only; and in Azure it logs in as a role that has only `SELECT` privileges. A session setting can be switched off by a client; a missing privilege can't.
+**Read-only in three layers.** The API code only runs parameterised `SELECT`s; its sessions are opened read-only; and in Azure it logs in as a role that has only `SELECT` privileges. A session setting can be switched off by a client; a missing privilege can't. The one write path, the Telegram webhook, uses its own database URL and a role that can't delete or touch `jobs`.
 
 **Batched upserts for a remote database.** Row by row, each job cost about 4 network round trips: fine on localhost, slow across the internet. Pipelined `executemany` plus one `unnest` insert for the skill links cut a batch to about 16 round trips. The Azure load went from 4 minutes to 19 seconds.
 
@@ -147,7 +161,7 @@ The five I'd defend first. The full list, with what I rejected each time, is in 
 
 ## Further reading
 
-- [docs/AZURE_DEPLOY.md](docs/AZURE_DEPLOY.md): Azure resources, deploy and rollback, secrets and rotation, cost guardrails, kill switch, firewall auto-update.
+- [docs/AZURE_DEPLOY.md](docs/AZURE_DEPLOY.md): Azure resources, deploy and rollback, secrets and rotation, cost guardrails, kill switch, firewall auto-update, tracker setup.
 - [docs/COPILOT_STUDIO.md](docs/COPILOT_STUDIO.md): the Power Platform custom connector, the daily Telegram flow and the Copilot Studio agent, step by step.
 - [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md): every design decision, grouped by roadmap step.
 - [learning_log.md](learning_log.md): skills practised, with the file or commit as evidence.
@@ -159,7 +173,7 @@ The five I'd defend first. The full list, with what I rejected each time, is in 
 2. ✓ Load jobs into PostgreSQL with idempotent upserts; Excel kept as an export
 3. ✓ API foundation: SQL migrations, read-only FastAPI with an API key, GitHub Actions CI
 4. ✓ Deploy to Azure on free tiers (Container Apps, PostgreSQL Flexible Server, SELECT-only role, budget alert)
-5. Partly done: Power Platform custom connector and daily Telegram flow are live; the Copilot Studio agent is configured but waits for credits
+5. Partly done: Power Platform custom connector and daily Telegram flow are live; application tracker and 👍/👎 labels via a Telegram webhook (coded, setup in [docs/AZURE_DEPLOY.md](docs/AZURE_DEPLOY.md#tracker-setup)); the Copilot Studio agent is configured but waits for credits
 6. Power BI dashboard: skill trends, Microsoft-skill demand, match quality
 7. Embeddings with pgvector and semantic search; full descriptions
 8. Custom LLM matching agent (Claude tool use) and an MCP server over the same API
