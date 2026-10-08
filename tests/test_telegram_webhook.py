@@ -21,10 +21,13 @@ HEADERS = {wh.SECRET_HEADER: SECRET}
 
 
 @pytest.fixture(autouse=True)
-def env(monkeypatch):
+def env(monkeypatch, request):
     # importing jobpilot.api loads the real .env; replace its values with the test ones
-    for name in ("TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_OWNER_ID", "FEEDBACK_DATABASE_URL", "DATABASE_URL"):
+    for name in ("TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_OWNER_ID", "FEEDBACK_DATABASE_URL"):
         monkeypatch.delenv(name, raising=False)
+    # db tests keep it: the pg fixture needs the URL, and in CI there is no .env to reload it from
+    if request.node.get_closest_marker("db") is None:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", SECRET)
     monkeypatch.setenv("TELEGRAM_OWNER_ID", str(OWNER))
 
