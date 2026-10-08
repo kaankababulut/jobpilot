@@ -7,8 +7,9 @@
 -- own role that can write these three tables and nothing else, and can't DELETE, so a bug can't wipe history.
 -- No sequence grants: GENERATED ALWAYS AS IDENTITY draws ids from an internal sequence that Postgres
 -- doesn't permission-check on INSERT (unlike SERIAL), so INSERT on the table is enough (tested).
--- The password is never in a migration. The owner sets it once, in psql:
---   ALTER ROLE jobpilot_feedback LOGIN;  then  \password jobpilot_feedback
+-- The password is never in a migration. The owner sets it once with the script in docs/AZURE_DEPLOY.md
+-- (ALTER ROLE ... LOGIN PASSWORD via the admin URL, copied to the clipboard), not by pasting into
+-- psql's hidden \password prompt, which mangled pastes twice.
 
 -- one label per job, latest wins (PK = idempotency key); score_at_label freezes what the scorer said,
 -- so later re-scoring (steps 7-8) can still be compared with what I saw
