@@ -4,6 +4,125 @@
     "application/json"
   ],
   "definitions": {
+    "ApplicationInfo": {
+      "properties": {
+        "applied_on": {
+          "description": "The day the application was sent.",
+          "format": "date",
+          "title": "Applied On",
+          "type": "string"
+        },
+        "company": {
+          "title": "Company",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "description": "Application id.",
+          "title": "Id",
+          "type": "integer"
+        },
+        "job_id": {
+          "description": "The JobPilot job applied to (see get_job); null if applied outside JobPilot.",
+          "title": "Job Id",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "last_event_at": {
+          "description": "Latest logged status change; null if none.",
+          "format": "date-time",
+          "title": "Last Event At",
+          "type": "string",
+          "x-nullable": true
+        },
+        "recorded_via": {
+          "description": "How it was recorded: telegram, import or manual.",
+          "title": "Recorded Via",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/ApplicationStatus"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "description": "Last change to the application, e.g. a status update.",
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string",
+          "x-nullable": true
+        }
+      },
+      "required": [
+        "id",
+        "job_id",
+        "company",
+        "title",
+        "url",
+        "recorded_via",
+        "status",
+        "applied_on",
+        "created_at",
+        "updated_at",
+        "last_event_at"
+      ],
+      "title": "ApplicationInfo",
+      "type": "object"
+    },
+    "ApplicationList": {
+      "properties": {
+        "has_more": {
+          "description": "True if another page exists; fetch it with offset + limit.",
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/ApplicationInfo"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "limit": {
+          "title": "Limit",
+          "type": "integer"
+        },
+        "offset": {
+          "title": "Offset",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "limit",
+        "offset",
+        "has_more"
+      ],
+      "title": "ApplicationList",
+      "type": "object"
+    },
+    "ApplicationStatus": {
+      "enum": [
+        "applied",
+        "assessment",
+        "interview",
+        "offer",
+        "rejected",
+        "withdrawn"
+      ],
+      "title": "ApplicationStatus",
+      "type": "string"
+    },
     "JobDetail": {
       "properties": {
         "apply_url": {
@@ -442,6 +561,78 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/applications": {
+      "get": {
+        "description": "Returns one page of tracked applications, most recently applied first, with their current status. Use open=true for the ones still in progress (not offer, rejected or withdrawn).",
+        "operationId": "list_applications",
+        "parameters": [
+          {
+            "description": "Only applications with this status.",
+            "enum": [
+              "applied",
+              "assessment",
+              "interview",
+              "offer",
+              "rejected",
+              "withdrawn"
+            ],
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Status"
+          },
+          {
+            "default": false,
+            "description": "true: only applications still in progress (not offer, rejected or withdrawn).",
+            "in": "query",
+            "name": "open",
+            "required": false,
+            "type": "boolean",
+            "x-ms-summary": "Open"
+          },
+          {
+            "default": 20,
+            "description": "Page size (1-100).",
+            "in": "query",
+            "maximum": 100,
+            "minimum": 1,
+            "name": "limit",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Limit"
+          },
+          {
+            "default": 0,
+            "description": "How many applications to skip, for paging (0-10000).",
+            "in": "query",
+            "maximum": 10000,
+            "minimum": 0,
+            "name": "offset",
+            "required": false,
+            "type": "integer",
+            "x-ms-summary": "Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "schema": {
+              "$ref": "#/definitions/ApplicationList"
+            }
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "List the owner's job applications, newest first"
+      }
+    },
     "/health": {
       "get": {
         "description": "Needs no API key, returns no job data and doesn't touch the database, so it's a cheap public liveness check. To check the database too, call recent_runs (needs the key).",

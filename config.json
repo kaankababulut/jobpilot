@@ -43,6 +43,7 @@
     "React", "React Native", "Node.js", "Express", "Dash/Plotly", "MySQL", "SQL",
     "Firebase", "Git", "Jira", "Pydantic", "Pandas", "NumPy", "XGBoost", "Machine Learning",
     "ETL", "Web Scraping", "Data Visualization", "Multi-agent / LLM", "UML", "Figma",
-    "Agile/Scrum", "Testing", "REST API", "SQL Server", "English"
+    "Agile/Scrum", "Testing", "REST API", "SQL Server", "English",
+    "PostgreSQL", "Docker", "CI/CD", "Django/Flask/FastAPI", "Azure", "Power Automate", "Copilot Studio", "Statistics / A-B testing", "OOP / Design Patterns", "Excel"
   ]
 }

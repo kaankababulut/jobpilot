@@ -1,6 +1,6 @@
 # Deploy to Azure
 
-Runbook for the cloud half of JobPilot: what exists, how to deploy and roll back, where secrets live, cost guardrails and the kill switch. Back to the [README](../README.md).
+Runbook for the cloud half of JobPilot: what exists, how to deploy and roll back, where secrets live, cost guardrails, the kill switch and the tracker setup. Back to the [README](../README.md).
 
 ## What exists
 
@@ -38,6 +38,8 @@ The database lives in Sweden Central because Germany West Central refused new Po
 | `database-url` (connects as the read-only `jobpilot_api` role) | Container App → **Secrets** → env var `DATABASE_URL` | the deployed API |
 | `api-key` (the cloud API key, different from the local one) | Container App → **Secrets** → env var `JOBPILOT_API_KEY`; my copy in `.env` → `JOBPILOT_CLOUD_API_KEY` | the deployed API; my scripts |
 | Firewall updater client secret | `.env` → `AZURE_CLIENT_SECRET` (expires after 12 months) | `azure_firewall.py` |
+| `telegram-webhook-secret` | Container App → **Secrets** → env var `TELEGRAM_WEBHOOK_SECRET`; my copy in `.env` → `TELEGRAM_WEBHOOK_SECRET` | the webhook; `setWebhook` |
+| `feedback-database-url` (connects as the writer role `jobpilot_feedback`) | Container App → **Secrets** → env var `FEEDBACK_DATABASE_URL` | the webhook only |
 
 No secret is in the image, in git or in CI. CI pushes images with the short-lived `GITHUB_TOKEN`.
 
@@ -118,3 +120,117 @@ The home IP changes almost daily, and Azure's firewall silently drops connection
 - **.env:** `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID` (plus `AZURE_DATABASE_URL`, for the host). If any is blank, the update is skipped.
 - **Test it (from home):** `python -m jobpilot.azure_firewall`. It prints one line and exits 0 when the database is reachable.
 - **Secret expired** (the log says "client secret expired"): Entra ID → App registrations → `jobpilot-firewall-updater` → Certificates & secrets → New client secret → copy the **Value** into `.env` as `AZURE_CLIENT_SECRET` → delete the old secret → set a calendar reminder for the new expiry date.
+
+## Tracker setup
+
+One-time setup for the application tracker: Telegram buttons and commands → `POST /telegram/webhook` → Azure PostgreSQL as `jobpilot_feedback`. Do the steps in this order, from home (so the firewall lets you in; run `python -m jobpilot.azure_firewall` first if your IP changed). The design is explained in [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md#application-tracker-roadmap-step-5-follow-up).
+
+Placeholders: `<api-host>` is the Container App's address (see [What exists](#what-exists)), `<TELEGRAM_OWNER_ID>` is my Telegram user id. In a private chat the user id is the same number as the chat id, so it's the `<chat_id>` from [COPILOT_STUDIO.md §4](COPILOT_STUDIO.md#4-telegram-bot).
+
+**a) Merge and migrate.** Merge the pull request into `main` and wait for CI to push the image. Then apply migration 004 to both databases, before deploying the new code:
+
+```powershell
+python -m jobpilot.migrate                                # local
+python -m jobpilot.migrate --url-env AZURE_DATABASE_URL   # Azure
+```
+
+**b) Give `jobpilot_feedback` a password.** The migration creates the role without login. This is the [`jobpilot_api` rotation script](#secrets), adapted: it sets a random password and puts the webhook's database URL on the clipboard. Nothing is printed.
+
+```powershell
+# PowerShell, from the project folder; prints no secret
+@'
+import os, secrets, subprocess
+from urllib.parse import urlsplit
+import psycopg
+from psycopg import sql
+from dotenv import load_dotenv
+load_dotenv(".env")
+admin = urlsplit(os.environ["AZURE_DATABASE_URL"])
+pw = secrets.token_urlsafe(32)  # URL-safe characters: no encoding needed in the URL
+with psycopg.connect(admin.geturl(), connect_timeout=10) as conn:
+    conn.execute(sql.SQL("ALTER ROLE jobpilot_feedback LOGIN PASSWORD {}").format(sql.Literal(pw)))
+url = f"postgresql://jobpilot_feedback:{pw}@{admin.hostname}:5432{admin.path}?sslmode=require"
+subprocess.run("clip", input=url, text=True, check=True)
+print("jobpilot_feedback password set; the new FEEDBACK_DATABASE_URL is on the clipboard")
+'@ | python -
+```
+
+Keep the clipboard for step c. This URL goes only into the Container App. `FEEDBACK_DATABASE_URL` in `.env` is for a local API run; leave it blank there (the local webhook then answers 503), so a local test can't write to Azure. The same script rotates the password later: run it again, update the secret, then restart the active revision.
+
+**c) Container App secrets, variables and a new revision.**
+
+1. Container App → **Secrets** → **Add**: name `feedback-database-url`, value: paste the clipboard → **Add**.
+2. Create the webhook secret on the clipboard:
+   `python -c "import secrets, subprocess; subprocess.run('clip', input=secrets.token_urlsafe(32), text=True, check=True)"`
+   Telegram allows only `A-Z a-z 0-9 _ -` in it, which is exactly what `token_urlsafe` produces. Paste it into `.env` as `TELEGRAM_WEBHOOK_SECRET` (step d needs it), then **Secrets** → **Add**: name `telegram-webhook-secret`, paste the same value. Clear the clipboard afterwards.
+3. **Containers** → **Edit and deploy** → select the container:
+   - Image tag: the latest `sha-...` from `main` (see [Deploy a new version](#deploy-a-new-version)).
+   - **Environment variables** → add:
+
+     | Name | Source | Value |
+     |------|--------|-------|
+     | `TELEGRAM_WEBHOOK_SECRET` | Reference a secret | `telegram-webhook-secret` |
+     | `FEEDBACK_DATABASE_URL` | Reference a secret | `feedback-database-url` |
+     | `TELEGRAM_OWNER_ID` | Manual entry | `<TELEGRAM_OWNER_ID>` |
+
+   - **Save** → **Create**. This revision also brings `source=jooble` in `/jobs` and `GET /applications`.
+4. Check: `/health` answers 200; `/applications?open=true` with the key answers 200 (see [Call the live API](#call-the-live-api)); a POST to the webhook without the secret answers 401:
+   `Invoke-WebRequest -Method Post -Uri "https://<api-host>/telegram/webhook" -Body '{}' -ContentType application/json` → 401 (PowerShell shows it as an error, which is expected).
+
+**d) Point Telegram at the webhook.** The bot token is part of the `setWebhook` URL. Don't type it into a terminal (shell history keeps it), don't let it show in a screenshot, and never paste the request URL anywhere. This script reads the token and the secret from `.env` and prints only Telegram's answer:
+
+```powershell
+# PowerShell, from the project folder; prints no secret
+@'
+import json, os, urllib.request
+from dotenv import load_dotenv
+load_dotenv(".env")
+HOST = "<api-host>"  # edit: the Container App's address, without https://
+token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+def call(method, payload=None):
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}",
+                                 data=json.dumps(payload or {}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r)
+    except Exception as e:  # the type and status only: the request URL contains the token
+        return {"ok": False, "error": type(e).__name__, "status": getattr(e, "code", None)}
+r = call("setWebhook", {"url": f"https://{HOST}/telegram/webhook",
+                        "secret_token": os.environ["TELEGRAM_WEBHOOK_SECRET"].strip(),
+                        "allowed_updates": ["message", "callback_query"],
+                        "drop_pending_updates": True})
+print("setWebhook:", r.get("ok"), r.get("description") or r.get("error"))
+info = call("getWebhookInfo").get("result", {})
+print({k: info.get(k) for k in ("url", "pending_update_count", "allowed_updates",
+                                "last_error_date", "last_error_message")})
+'@ | python -
+```
+
+Expected: `setWebhook: True Webhook was set`, then `getWebhookInfo` with your URL, `allowed_updates` `['message', 'callback_query']` and no `last_error_message`. `getWebhookInfo` never returns the secret. `drop_pending_updates` throws away anything sent to the bot before the webhook existed. From now on `getUpdates` (the chat-id script in COPILOT_STUDIO §4) stops working: Telegram delivers updates by webhook or by polling, not both.
+
+**e) Update the connector.** Power Platform → solution `JobPilot` → custom connector `JobPilot` → **Edit** → **Update from OpenAPI file** → `docs/openapi-v2.json` → **Update connector**. Check that **Definition** now shows 6 actions (new: `list_applications`) and that **Security** still says API Key, `X-API-Key`, Header. The webhook is hidden from the spec, so it never appears as an action.
+
+**f) Import the old spreadsheet.** It reads `~/Desktop/applications.xlsx` by default (header row 1: Date, Company, Job title, Link, Status, Notes). Dry run first; it writes nothing:
+
+```powershell
+python -m jobpilot.import_applications --dry-run                               # local
+python -m jobpilot.import_applications --dry-run --url-env AZURE_DATABASE_URL  # Azure
+```
+
+Read the summary line: rows read, inserted, already present, **matched to a job**, errors. A low "matched" count usually means the Link cells are hyperlinks whose display text ("link", "LinkedIn") differs from the address: the import reads the cell's text, not the link behind it. Put the full URL in the cell as its text, save, and dry-run again. Fix any rows listed as errors (shown by Excel row number). Then run it for real, local and Azure:
+
+```powershell
+python -m jobpilot.import_applications
+python -m jobpilot.import_applications --url-env AZURE_DATABASE_URL
+```
+
+Re-running is safe: rows already imported are skipped, and a status the bot has changed is never overwritten.
+
+**g) Smoke test.** In the private chat with the bot (the first answer can take a few seconds while the app starts from zero; Telegram retries if it times out):
+
+1. `/start` → the command list.
+2. `/apps` → the open applications from the import.
+3. Run the flow once (**Test** → **Manually**, after the [keyboard edit](COPILOT_STUDIO.md#7-tracker-buttons-in-the-daily-alert)) and tap 👍 under a job → the toast "Saved 👍". Tap 👎 on the same job to see the label change; the latest label wins.
+
+If nothing answers, run the step d script again and read `last_error_message`: 401 means the secret in `.env` (used for `setWebhook`) and in the Container App differ; 503 means a variable is missing in the revision.

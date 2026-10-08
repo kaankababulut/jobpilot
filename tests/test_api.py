@@ -181,4 +181,4 @@ def test_docs_off_hides_docs_but_spec_still_builds(monkeypatch, value):
         assert client.get(path).status_code == 404, path
     assert client.get("/health").json() == {"status": "ok"}  # the API itself still serves
     spec = app.openapi()  # built in code, for the snapshot, even with the URL closed
-    assert set(spec["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs"}
+    assert set(spec["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs", "/applications"}

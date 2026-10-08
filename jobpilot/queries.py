@@ -8,6 +8,8 @@ import datetime as dt
 
 from psycopg.rows import dict_row
 
+from jobpilot.feedback import CLOSED  # one list of finished statuses, shared with the bot
+
 # the list view leaves out description, restrictions and red_flags to keep each row small
 SUMMARY_COLS = ("id", "source", "title", "company", "location", "work_type", "open_to_you", "match_score",
                 "date_posted", "first_seen", "last_seen", "apply_url")
@@ -102,6 +104,28 @@ def top_skills(conn, days: int = 30, category: str | None = None, limit: int = 2
            f"{cat_sql}GROUP BY s.skill_id, t.n ORDER BY jobs DESC, s.name LIMIT %s")
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(sql, params + [limit]).fetchall()
+
+
+def list_applications(conn, status: str | None = None, open_only: bool = False, limit: int = 20,
+                      offset: int = 0) -> list[dict]:
+    """One page of tracked applications, newest applied_on first; id breaks ties, so paging is stable.
+    open_only drops the CLOSED statuses. last_event_at is the latest status change (NULL if none logged).
+    notes are left out: free text the owner typed, not needed to list applications."""
+    parts, params = [], []
+    if status is not None:
+        parts.append("a.status = %s")
+        params.append(status)
+    if open_only:
+        parts.append("a.status <> ALL(%s)")
+        params.append(list(CLOSED))
+    where = ("WHERE " + " AND ".join(parts)) if parts else ""
+    # correlated max() rather than JOIN + GROUP BY: application_events is indexed on application_id
+    # source is renamed: in /jobs it means the job board, here how the application was recorded
+    sql = ("SELECT a.id, a.job_id, a.company, a.title, a.url, a.source AS recorded_via, a.status, a.applied_on, "
+           "a.created_at, a.updated_at, (SELECT max(e.at) FROM application_events e WHERE e.application_id = a.id) AS last_event_at "
+           f"FROM applications a {where} ORDER BY a.applied_on DESC, a.id DESC LIMIT %s OFFSET %s")
+    with conn.cursor(row_factory=dict_row) as cur:
+        return cur.execute(sql, params + [limit, offset]).fetchall()
 
 
 def recent_runs(conn, limit: int = 10) -> list[dict]:
