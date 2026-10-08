@@ -38,7 +38,7 @@ The owner directs the work and reviews it; AI agents write most of the code. Exp
 2. **implementer**: carries out one approved step at a time.
 3. **test-writer**: adds tests for edge cases, or before a refactor.
 4. **reviewer**: reviews the diff before each commit.
-5. Power Platform custom connector + Power Automate daily Telegram alert over the deployed API ✓; Copilot Studio agent configured, blocked on credits (runbook docs/COPILOT_STUDIO.md) ← current
+5. **docs-writer**: updates the README and learning log, and drafts CV bullets, at the end of each feature.
 
 Keep each change small enough to review in 5 minutes.
 
@@ -52,7 +52,7 @@ One read-only HTTPS API serves every consumer (Copilot Studio, Power Automate, P
 2. Load jobs into Postgres (idempotent upserts), Excel kept as an export ✓
 3. API foundation: SQL migrations runner, read-only FastAPI with an API key, GitHub Actions CI ✓
 4. Deploy to Azure on free tiers (Container Apps + Postgres Flexible, SELECT-only role, budget alert); the 12:00 run also loads into Azure ✓
-5. Copilot Studio agent + Power Automate daily alert over the deployed API (replaces the Excel-based agent in COPILOT_AGENT_SETUP.md) ← current
+5. Power Platform custom connector + Power Automate daily Telegram alert over the deployed API ✓; Copilot Studio agent configured, blocked on credits (runbook docs/COPILOT_STUDIO.md) ← current
 6. Power BI dashboard: skill trends, Microsoft-skill demand, match quality
 7. Embeddings with pgvector, semantic search; full descriptions; re-tag skills on stored jobs
 8. Custom LLM matching agent (Claude tool use) + MCP server over the same API
