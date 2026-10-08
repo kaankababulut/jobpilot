@@ -145,3 +145,54 @@ def test_recent_runs_newest_first_with_id_tiebreak(pg):
     assert [(r["kind"], r["rows_written"]) for r in rows] == [("daily", 0), ("daily", 7), ("backfill", 5)]
     assert set(rows[0]) == {"id", "kind", "run_date", "loaded_at", "rows_offered", "rows_written"}
     assert [r["id"] for r in queries.recent_runs(pg, limit=2)] == [r["id"] for r in rows[:2]]
+
+
+# ---------- list_applications ----------
+# (company, applied_on, status); 3 and 4 share a day, so the higher id must come first
+APPS = [("Acme", "2026-09-20", "applied"), ("Globex", "2026-09-25", "rejected"),
+        ("Initech", "2026-09-28", "interview"), ("Umbrella", "2026-09-28", "offer")]
+
+
+@pytest.fixture
+def apps(pg) -> dict[str, int]:
+    for company, day, status in APPS:
+        pg.execute("INSERT INTO applications (company, title, applied_on, status, source) "
+                   "VALUES (%s, 'Intern', %s, %s, 'manual')", (company, day, status))
+    return dict(pg.execute("SELECT company, id FROM applications").fetchall())
+
+
+def companies(pg, **kw) -> list[str]:
+    return [r["company"] for r in queries.list_applications(pg, **kw)]
+
+
+@pytest.mark.parametrize("kw, expected", [
+    ({}, ["Umbrella", "Initech", "Globex", "Acme"]),     # newest applied_on first, id breaks the tie
+    ({"open_only": True}, ["Initech", "Acme"]),          # offer and rejected are closed
+    ({"status": "rejected"}, ["Globex"]),
+    ({"status": "offer", "open_only": True}, []),        # the two filters combine with AND
+    ({"status": EVIL}, []),                              # injection strings are just data
+])
+def test_list_applications_filters(pg, apps, kw, expected):
+    assert companies(pg, **kw) == expected
+
+
+def test_list_applications_paging(pg, apps):
+    pages = [companies(pg, limit=3, offset=o) for o in (0, 3, 6)]
+    assert pages == [["Umbrella", "Initech", "Globex"], ["Acme"], []]
+
+
+def test_list_applications_columns_and_last_event(pg, apps):
+    pg.execute("INSERT INTO application_events (application_id, status, at) VALUES "
+               "(%s, 'applied', '2026-09-28 09:00+00'), (%s, 'interview', '2026-10-02 09:00+00')",
+               (apps["Initech"], apps["Initech"]))
+    rows = {r["company"]: r for r in queries.list_applications(pg)}
+    assert set(rows["Acme"]) == {"id", "job_id", "company", "title", "url", "recorded_via", "status", "applied_on",
+                                 "created_at", "updated_at", "last_event_at"}  # no notes
+    assert rows["Initech"]["last_event_at"] == dt.datetime(2026, 10, 2, 9, 0, tzinfo=dt.timezone.utc)
+    assert rows["Acme"]["last_event_at"] is None and rows["Acme"]["applied_on"] == dt.date(2026, 9, 20)
+
+
+def test_list_applications_runs_as_the_read_only_api_role(pg, apps):
+    from test_feedback_schema_db import as_role
+    with as_role(pg, "jobpilot_api"):  # the role the deployed API connects as
+        assert companies(pg, open_only=True) == ["Initech", "Acme"]

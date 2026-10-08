@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
-from jobpilot import queries, telegram_webhook
+from jobpilot import feedback, queries, telegram_webhook
 from jobpilot.db import connect, redact
 
 try:
@@ -267,6 +267,51 @@ def recent_runs(conn=Depends(get_conn),
                 limit: Annotated[int, Query(ge=1, le=50, description="How many loads to return (1-50).")] = 10,
                 ) -> RunList:
     return RunList(items=queries.recent_runs(conn, limit=limit))
+
+
+# ---------- applications ----------
+# built from feedback.STATUSES (the same list as 004's CHECK), so the API's enum can't drift from the bot's
+ApplicationStatus = Enum("ApplicationStatus", [(s, s) for s in feedback.STATUSES], type=str)
+
+
+class ApplicationInfo(BaseModel):
+    id: int = Field(description="Application id.")
+    job_id: int | None = Field(description="The JobPilot job applied to (see get_job); null if applied outside JobPilot.")
+    company: str
+    title: str
+    url: str | None
+    recorded_via: str = Field(description="How it was recorded: telegram, import or manual.")
+    status: ApplicationStatus = Field(description="Current status.")
+    applied_on: dt.date = Field(description="The day the application was sent.")
+    created_at: dt.datetime
+    updated_at: dt.datetime = Field(description="Last change to the application, e.g. a status update.")
+    last_event_at: dt.datetime | None = Field(description="Latest logged status change; null if none.")
+
+
+class ApplicationList(BaseModel):
+    items: list[ApplicationInfo]
+    limit: int
+    offset: int
+    has_more: bool = Field(description="True if another page exists; fetch it with offset + limit.")
+
+
+@router.get("/applications", response_model=ApplicationList, operation_id="list_applications",
+            dependencies=[Depends(require_key)], summary="List the owner's job applications, newest first",
+            description="Returns one page of tracked applications, most recently applied first, with their current "
+                        "status. Use open=true for the ones still in progress (not offer, rejected or withdrawn).")
+def list_applications(
+    conn=Depends(get_conn),
+    status: Annotated[ApplicationStatus | None, Query(description="Only applications with this status.")] = None,
+    # alias: the parameter is "open" in the URL, but `open` would shadow the builtin here
+    open_only: Annotated[bool, Query(
+        alias="open", description="true: only applications still in progress (not offer, rejected or withdrawn).")] = False,
+    limit: Annotated[int, Query(ge=1, le=100, description="Page size (1-100).")] = 20,
+    offset: Annotated[int, Query(ge=0, le=10000, description="How many applications to skip, for paging (0-10000).")] = 0,
+) -> ApplicationList:
+    # one extra row tells us whether there's a next page, as in list_jobs
+    rows = queries.list_applications(conn, status=status.value if status else None, open_only=open_only,
+                                     limit=limit + 1, offset=offset)
+    return ApplicationList(items=rows[:limit], limit=limit, offset=offset, has_more=len(rows) > limit)
 
 
 def create_app(docs: bool | None = None) -> FastAPI:

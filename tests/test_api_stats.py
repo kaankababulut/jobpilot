@@ -86,11 +86,11 @@ def test_runs_params_and_shape(client, calls):
 
 def test_openapi_covers_every_endpoint():
     spec = api.app.openapi()
-    assert set(spec["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs"}
+    assert set(spec["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs", "/applications"}
     ops = {path: item["get"] for path, item in spec["paths"].items()}
     assert all(set(item) == {"get"} for item in spec["paths"].values())  # read-only: no other methods
     names = [op["operationId"] for op in ops.values()]
-    assert sorted(names) == ["get_job", "health", "list_jobs", "recent_runs", "top_skills"]
+    assert sorted(names) == ["get_job", "health", "list_applications", "list_jobs", "recent_runs", "top_skills"]
     for path, op in ops.items():
         assert op["summary"] and op["description"], path
         assert all(p.get("description") for p in op.get("parameters", [])), path
@@ -112,7 +112,7 @@ def test_openapi_snapshot_is_current():
 
 def test_openapi_snapshot_ignores_docs_switch(monkeypatch):
     monkeypatch.setenv("JOBPILOT_DOCS", "0")  # the deployed setting must not empty the snapshot
-    assert set(json.loads(api.spec_json())["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs"}
+    assert set(json.loads(api.spec_json())["paths"]) == {"/health", "/jobs", "/jobs/{job_id}", "/skills", "/runs", "/applications"}
 
 
 def test_write_spec_is_utf8_with_trailing_newline(tmp_path):

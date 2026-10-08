@@ -8,7 +8,7 @@ import pytest
 from jobpilot import api, openapi2
 
 OPS = {"/health": "health", "/jobs": "list_jobs", "/jobs/{job_id}": "get_job", "/skills": "top_skills",
-       "/runs": "recent_runs"}
+       "/runs": "recent_runs", "/applications": "list_applications"}
 
 
 @pytest.fixture(scope="module")
