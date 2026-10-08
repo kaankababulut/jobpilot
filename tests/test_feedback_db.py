@@ -106,6 +106,15 @@ def test_set_status_logs_an_event(pg):
     assert events(pg, app) == [("applied", None), ("interview", "Tuesday 10:00")]
 
 
+def test_set_status_repeat_without_note_logs_nothing(pg):
+    with as_role(pg, FEEDBACK_ROLE):
+        app, _ = fb.add_application(pg, "Globex", "Data Intern", None)
+        assert fb.set_status(pg, app, "interview")
+        assert fb.set_status(pg, app, "interview")  # same /s twice: still a known id
+        assert fb.set_status(pg, app, "interview", "second round")  # a note is news, so it's logged
+    assert events(pg, app) == [("applied", None), ("interview", None), ("interview", "second round")]
+
+
 def test_set_status_bad_status_changes_nothing(pg):
     app, _ = fb.add_application(pg, "Globex", "Data Intern", None)
     with pytest.raises(ValueError):

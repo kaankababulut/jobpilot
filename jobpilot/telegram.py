@@ -19,6 +19,7 @@ _ID_RE = re.compile(_ID)
 SAVED_UP, SAVED_DOWN = "Saved 👍", "Saved 👎"
 APPLIED, ALREADY_APPLIED, UNKNOWN_JOB = "Marked as applied ✅", "Already applied", "Unknown job"
 NO_APPS = "No open applications."
+ERROR = "Something went wrong"
 HELP = ("JobPilot commands:\n"
         "/apps - open applications\n"
         "/s <id> <status> [note] - update an application\n"
@@ -86,8 +87,14 @@ def _parse_id(text: str) -> int | None:
     return n if n <= MAX_ID else None
 
 
+def _id_of(obj: dict, key: str):
+    # isinstance, not `or {}`: a string or list where Telegram sends an object must be ignored, not crash
+    inner = obj.get(key)
+    return inner.get("id") if isinstance(inner, dict) else None
+
+
 def _parse_callback(cq: dict, owner_id: int) -> Incoming | None:
-    sender = (cq.get("from") or {}).get("id")
+    sender = _id_of(cq, "from")
     data, callback_id = cq.get("data"), cq.get("id")
     if not _is_owner(sender, owner_id) or not isinstance(data, str) or not isinstance(callback_id, str):
         return None
@@ -135,12 +142,13 @@ def parse_update(update: dict, owner_id: int) -> Incoming | None:
     the owner, malformed, or a kind of update the bot doesn't handle (edited messages, joins, ...)."""
     if not isinstance(update, dict):
         return None
-    if isinstance(update.get("callback_query"), dict):
-        return _parse_callback(update["callback_query"], owner_id)
+    if "callback_query" in update:
+        cq = update["callback_query"]
+        return _parse_callback(cq, owner_id) if isinstance(cq, dict) else None
     msg = update.get("message")
     if not isinstance(msg, dict):
         return None  # edited_message and every other update type
-    sender, chat = (msg.get("from") or {}).get("id"), (msg.get("chat") or {}).get("id")
+    sender, chat = _id_of(msg, "from"), _id_of(msg, "chat")
     text = msg.get("text")
     # both, so the owner talking in a group (chat id != owner) is ignored too: private chat only
     if not _is_owner(sender, owner_id) or not _is_owner(chat, owner_id) or not isinstance(text, str):

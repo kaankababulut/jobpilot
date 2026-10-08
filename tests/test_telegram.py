@@ -115,6 +115,13 @@ def test_edited_message_is_ignored():
     {"update_id": 1, "message": {"from": {"id": OWNER}, "text": "/apps"}},  # no chat
     {"update_id": 1, "message": {"from": {"id": OWNER}, "chat": {"id": OWNER}}},  # a photo: no text
     {"update_id": 1, "my_chat_member": {}}, {"update_id": 1}, {}, [], None,
+    # wrong types where Telegram sends objects: ignored, never an AttributeError (a 500 in the webhook)
+    {"update_id": 1, "message": {"from": "x", "chat": {"id": OWNER}, "text": "/apps"}},
+    {"update_id": 1, "message": {"from": {"id": OWNER}, "chat": [OWNER], "text": "/apps"}},
+    {"update_id": 1, "message": "/apps"},
+    {"update_id": 1, "callback_query": "u:42"},
+    {"update_id": 1, "callback_query": None, "message": {"from": {"id": OWNER}, "chat": {"id": OWNER}, "text": "/apps"}},
+    {"update_id": 1, "callback_query": {"id": "cb1", "from": 7, "data": "u:42"}},
 ])
 def test_other_updates_are_ignored(update):
     assert parse(update) is None

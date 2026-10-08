@@ -4,7 +4,9 @@ Run locally: uvicorn jobpilot.api:app --host 127.0.0.1 --port 8000
 (127.0.0.1 locally, so nothing outside this PC can reach it; docs at http://127.0.0.1:8000/docs unless JOBPILOT_DOCS=0).
 Deployed: the Dockerfile runs it on 0.0.0.0 in Azure Container Apps, behind HTTPS ingress, with docs off.
 Endpoints are plain `def`, not async: psycopg calls block, and FastAPI runs sync endpoints in a
-threadpool so one slow query doesn't stall the others. No connection pool yet; one user doesn't need it."""
+threadpool so one slow query doesn't stall the others. No connection pool yet; one user doesn't need it.
+The one exception to read-only is POST /telegram/webhook (jobpilot.telegram_webhook), with its own
+secret, owner check and write-only-to-feedback database role."""
 import datetime as dt
 import json
 import logging
@@ -20,7 +22,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
-from jobpilot import queries
+from jobpilot import queries, telegram_webhook
 from jobpilot.db import connect, redact
 
 try:
@@ -290,6 +292,8 @@ def create_app(docs: bool | None = None) -> FastAPI:
     app.add_exception_handler(psycopg.OperationalError, db_unavailable)
     app.add_exception_handler(psycopg.errors.QueryCanceled, query_timed_out)
     app.include_router(router)
+    # the Telegram bot's write route; hidden from OpenAPI, so the connector specs don't change
+    app.include_router(telegram_webhook.router)
     return app
 
 

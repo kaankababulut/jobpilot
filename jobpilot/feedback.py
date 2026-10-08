@@ -80,13 +80,16 @@ def add_application(conn, company: str, title: str, url: str | None, notes: str 
 
 
 def set_status(conn, application_id: int, status: str, note: str | None = None) -> bool:
-    """Moves an application to a new status and logs it in application_events. False for an unknown id."""
+    """Moves an application to a new status and logs it in application_events. False for an unknown id.
+    The same status again without a note changes nothing, so a repeated /s doesn't log a second event."""
     if status not in STATUSES:  # before any SQL, so a typo never reaches the database
         raise ValueError(f"status must be one of {STATUSES}, not {status!r}")
-    row = conn.execute("UPDATE applications SET status = %s, updated_at = now() WHERE id = %s RETURNING id",
-                       (status, application_id)).fetchone()
-    if row is None:
-        return False
+    # a note is news even when the status is the same, so only a note-less repeat is skipped
+    row = conn.execute("UPDATE applications SET status = %s, updated_at = now() "
+                       "WHERE id = %s AND (status IS DISTINCT FROM %s OR %s) RETURNING id",
+                       (status, application_id, status, note is not None)).fetchone()
+    if row is None:  # unknown id, or nothing new
+        return conn.execute("SELECT 1 FROM applications WHERE id = %s", (application_id,)).fetchone() is not None
     _add_event(conn, application_id, status, note)
     return True
 
