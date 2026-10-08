@@ -1,9 +1,7 @@
 {
   "searches": ["Software Engineer", "Data Engineer", "Data Analyst"],
   "regions": [
-    {"name": "Worldwide",       "geo_id": "92000000",  "remote_only": true,  "limit_per_search": 30},
-    {"name": "European Union",  "geo_id": "91000000",  "remote_only": true,  "limit_per_search": 25},
-    {"name": "Türkiye",         "geo_id": "102105699", "remote_only": false, "limit_per_search": 20}
+    {"name": "Türkiye",         "geo_id": "102105699", "remote_only": false, "limit_per_search": 25}
   ],
   "himalayas": {
     "enabled": true,
