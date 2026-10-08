@@ -107,12 +107,12 @@
           "type": "array"
         },
         "source": {
-          "description": "Where the job was found: linkedin or himalayas.",
+          "description": "Where the job was found: linkedin, himalayas or jooble.",
           "title": "Source",
           "type": "string"
         },
         "source_id": {
-          "description": "The job's id at its source (LinkedIn id or Himalayas URL).",
+          "description": "The job's id at its source (LinkedIn id, Himalayas URL or jooble:<id>).",
           "title": "Source Id",
           "type": "string"
         },
@@ -258,7 +258,7 @@
           "type": "array"
         },
         "source": {
-          "description": "Where the job was found: linkedin or himalayas.",
+          "description": "Where the job was found: linkedin, himalayas or jooble.",
           "title": "Source",
           "type": "string"
         },
@@ -510,7 +510,8 @@
             "description": "Only jobs from this source.",
             "enum": [
               "linkedin",
-              "himalayas"
+              "himalayas",
+              "jooble"
             ],
             "in": "query",
             "name": "source",

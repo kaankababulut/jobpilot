@@ -6,7 +6,7 @@ Writes:
                                              (point your Copilot agent at this file)
 Needs the APIFY_TOKEN environment variable.
 """
-import glob, json, os, re, socket, ssl, sys, time, datetime as dt, urllib.request, urllib.parse, urllib.error, traceback
+import glob, html, json, os, re, socket, ssl, sys, time, datetime as dt, urllib.request, urllib.parse, urllib.error, traceback
 from collections import Counter
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -181,6 +181,81 @@ def fetch_himalayas(cfg):
                 "_remote": True,
             }
         time.sleep(1)
+    return list(jobs.values())
+
+
+JOOBLE_UA = "JobPilot/1.0 (+https://github.com/kaankababulut/jobpilot)"  # Python's default UA gets a 403
+JOOBLE_REMOTE_RE = re.compile(r"remote|uzaktan|evden", re.I)  # "Evden çalışmak" = work from home
+
+
+def _mask(text: str, key: str) -> str:
+    # both forms: the raw key and the URL-quoted one that is actually in the request URL
+    return str(text).replace(urllib.parse.quote(key, safe=""), "<key>").replace(key, "<key>")
+
+
+def _jooble_error(e: Exception, key: str) -> Exception:
+    # the key sits in the URL path, and fetch_round logs str(e): copy the error with the key masked
+    if isinstance(e, urllib.error.HTTPError):  # stays an HTTPError, so a 403 is still "no retry"
+        return urllib.error.HTTPError(_mask(e.url, key), e.code, _mask(e.reason, key), e.headers, None)
+    if isinstance(e, urllib.error.URLError):
+        return urllib.error.URLError(_mask(e.reason, key))  # stays a network error
+    return e  # timeouts, resets, bad JSON: their messages don't include the URL
+
+
+def fetch_jooble(cfg: dict) -> list[dict]:
+    """Jobs from the Jooble API (an aggregator of company career pages and job boards) for one country.
+    Free key, read from JOOBLE_API_KEY; returned in the same shape as the other sources' items."""
+    key = os.environ.get("JOOBLE_API_KEY")
+    if not key:
+        log("  Jooble skipped: JOOBLE_API_KEY not set"); return []
+    c = cfg["jooble"]
+    cutoff = dt.date.today() - dt.timedelta(days=c["max_age_days"])
+    jobs, errors = {}, []
+    # page 1 only: the free key has a lifetime limit of 500 requests, so each search costs exactly one
+    for q in c["searches"]:
+        body = json.dumps({"keywords": q, "location": c["location"], "page": 1,
+                           "ResultOnPage": c["results_per_page"]}).encode()
+        req = urllib.request.Request(f"https://{c['host']}/api/{urllib.parse.quote(key, safe='')}", data=body,
+                                     method="POST", headers={"Content-Type": "application/json", "User-Agent": JOOBLE_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                items = json.load(r).get("jobs") or []
+        except Exception as e:  # one failed search shouldn't waste the requests the others already spent
+            errors.append(_jooble_error(e, key))
+            # 401/403: the key is invalid or its quota is used up, so the other searches would only waste quota
+            if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
+                raise errors[-1] from None
+            log(f"  WARNING: Jooble search '{q}' failed: {_mask(errors[-1], key)}")
+            continue
+        for j in items:
+            if j.get("id") is None:
+                continue
+            jid = f"jooble:{j['id']}"  # the prefix lets records.source_of tell Jooble ids from LinkedIn's
+            if jid in jobs:  # the searches overlap; keep the first copy
+                continue
+            try:
+                posted = dt.date.fromisoformat(str(j.get("updated") or "")[:10])
+            except ValueError:
+                posted = None  # an unreadable date keeps the job rather than losing it
+            if posted and posted < cutoff:  # Jooble also returns listings that are months old
+                continue
+            loc, etype = j.get("location") or "", j.get("type") or ""
+            # we searched one country, so a bare city still means that country (restrictions() needs to see it);
+            # a location with a comma already names its country, so it's left alone
+            if "," not in loc and not any(t.lower() in loc.lower() for t in cfg.get("open_locations", [])):
+                loc = f"{loc}, {c['location']}" if loc else c["location"]
+            desc = html.unescape(re.sub(r"<[^>]+>", " ", j.get("snippet") or ""))
+            jobs[jid] = {
+                "id": jid, "title": j.get("title"), "companyName": j.get("company"), "location": loc,
+                "postedAt": posted.isoformat() if posted else None, "employmentType": etype or None,
+                "salary": j.get("salary") or "", "descriptionText": " ".join(desc.split()),
+                "_link": j.get("link"), "_remote": bool(JOOBLE_REMOTE_RE.search(f"{loc} {etype}")),
+            }
+        time.sleep(1)
+    if errors and len(errors) == len(c["searches"]):
+        # all failed: raise, so fetch_round counts it (a network error still triggers the whole-round retry);
+        # from None: the original error (with the key in its URL) isn't chained
+        raise errors[-1] from None
     return list(jobs.values())
 
 
@@ -557,6 +632,9 @@ def main():
                for r in cfg["regions"]]
     if cfg.get("himalayas", {}).get("enabled"):
         sources.append(("Remote (Himalayas)", True, lambda: fetch_himalayas(cfg)))
+    # only with a key: a keyless Jooble "succeeds" empty, which would stop the all-sources-down retry from firing
+    if cfg.get("jooble", {}).get("enabled") and os.environ.get("JOOBLE_API_KEY", "").strip():
+        sources.append(("Jooble Türkiye", False, lambda: fetch_jooble(cfg)))
 
     jobs, n_raw = fetch_all(sources, set(known), cfg)
     log(f"Total: {n_raw} postings; {len(jobs)} new and relevant after filtering and de-duplication.")

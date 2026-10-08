@@ -71,7 +71,7 @@ def test_query_params_flattened(v2):
     assert (p["skill"]["minLength"], p["skill"]["maxLength"]) == (1, 60)
     assert (p["since"]["type"], p["since"]["format"]) == ("string", "date")
     assert p["work_type"]["type"] == "string" and p["work_type"]["enum"] == ["Remote", "Remote?", "Hybrid", "On-site"]
-    assert p["source"]["type"] == "string" and p["source"]["enum"] == ["linkedin", "himalayas"]
+    assert p["source"]["type"] == "string" and p["source"]["enum"] == ["linkedin", "himalayas", "jooble"]
     assert p["limit"]["default"] == 20 and p["limit"]["x-ms-summary"] == "Limit"
 
 

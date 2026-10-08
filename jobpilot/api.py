@@ -102,13 +102,14 @@ class WorkType(str, Enum):
 class Source(str, Enum):
     linkedin = "linkedin"
     himalayas = "himalayas"
+    jooble = "jooble"
 
 
 # the response models are flat (no nesting beyond the skills list) and use plain types, because
 # Power Platform connectors import OpenAPI 2.0, which handles simple schemas best
 class JobSummary(BaseModel):
     id: int = Field(description="Job id; pass it to get_job for the full posting.")
-    source: str = Field(description="Where the job was found: linkedin or himalayas.")
+    source: str = Field(description="Where the job was found: linkedin, himalayas or jooble.")
     title: str
     company: str | None
     location: str | None
@@ -137,8 +138,8 @@ class SkillOnJob(BaseModel):
 
 class JobDetail(BaseModel):
     id: int = Field(description="Job id.")
-    source: str = Field(description="Where the job was found: linkedin or himalayas.")
-    source_id: str = Field(description="The job's id at its source (LinkedIn id or Himalayas URL).")
+    source: str = Field(description="Where the job was found: linkedin, himalayas or jooble.")
+    source_id: str = Field(description="The job's id at its source (LinkedIn id, Himalayas URL or jooble:<id>).")
     region: str | None
     title: str
     company: str | None

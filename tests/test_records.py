@@ -35,6 +35,16 @@ def test_source_of_himalayas_url():
     assert source_of(HIMALAYAS_ID) == "himalayas"
 
 
+@pytest.mark.parametrize("sid", ["jooble:123", "jooble:-4567890123456789"])  # Jooble ids can be negative
+def test_source_of_jooble_id(sid):
+    assert source_of(sid) == "jooble"
+
+
+def test_jooble_row_keeps_the_prefixed_id():
+    rec = row_to_record(make_row(**{"Job ID": "jooble:123"}))
+    assert (rec["source"], rec["source_id"]) == ("jooble", "jooble:123")
+
+
 # ---------- row_to_record ----------
 def test_record_has_exactly_the_db_keys():
     assert set(row_to_record(make_row())) == DB_KEYS
