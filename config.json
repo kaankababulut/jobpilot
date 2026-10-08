@@ -1,15 +1,21 @@
 {
   "searches": ["Software Engineer", "Data Engineer", "Data Analyst"],
   "regions": [
-    {"name": "Worldwide",       "geo_id": "92000000",  "remote_only": true,  "limit_per_search": 30},
-    {"name": "European Union",  "geo_id": "91000000",  "remote_only": true,  "limit_per_search": 25},
-    {"name": "Türkiye",         "geo_id": "102105699", "remote_only": false, "limit_per_search": 20}
+    {"name": "Türkiye",         "geo_id": "102105699", "remote_only": false, "limit_per_search": 25}
   ],
   "himalayas": {
     "enabled": true,
     "country": "TR",
     "window_hours": 72,
     "searches": ["software engineer", "developer", "data engineer", "data analyst"]
+  },
+  "jooble": {
+    "enabled": true,
+    "host": "tr.jooble.org",
+    "location": "Türkiye",
+    "searches": ["junior software engineer", "junior data engineer", "junior data analyst"],
+    "results_per_page": 50,
+    "max_age_days": 14
   },
   "work_authorization": ["Türkiye"],
   "open_locations": ["Türkiye", "Turkey", "Worldwide", "Anywhere", "European Union", "Europe", "EMEA"],

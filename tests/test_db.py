@@ -145,3 +145,18 @@ def test_empty_batch_writes_nothing(pg):
     assert load(pg, []) == 0
     for table in ("jobs", "job_skills", "skills"):
         assert one(pg, f"SELECT count(*) FROM {table}")[0] == 0, table
+
+
+def test_jooble_source_is_allowed_after_migration_003(pg):
+    assert load(pg, [rec(**{"Job ID": "jooble:123"})]) == 1
+    assert one(pg, "SELECT source, source_id FROM jobs") == ("jooble", "jooble:123")
+    # exactly one CHECK on source is left: 003 replaced 001's instead of adding a second one beside it
+    assert one(pg, "SELECT count(*) FROM pg_constraint WHERE conrelid = 'jobs'::regclass AND contype = 'c' "
+                   "AND pg_get_constraintdef(oid) LIKE %s", ("%source%",))[0] == 1
+
+
+def test_unknown_source_is_still_rejected(pg):
+    import psycopg
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pg.execute("INSERT INTO jobs (source, source_id, title, first_seen, last_seen) "
+                   "VALUES ('indeed', '1', 'x', current_date, current_date)")

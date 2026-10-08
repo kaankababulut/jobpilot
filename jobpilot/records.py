@@ -5,13 +5,16 @@ identity fields (Run Date, Job ID, Job Title) raise ValueError so the loader can
 import datetime as dt
 
 HIMALAYAS_PREFIX = "https://himalayas.app/"
+JOOBLE_PREFIX = "jooble:"  # added by job_searcher.fetch_jooble; kept in source_id, so ids stay unique
 # mirrors the CHECK on jobs.work_type; a value outside it would fail the whole insert
 WORK_TYPES = ("Remote", "Remote?", "Hybrid", "On-site")
 
 
 def source_of(source_id: str) -> str:
-    # Himalayas ids are guid URLs; LinkedIn ids are numeric
-    return "himalayas" if source_id.startswith(HIMALAYAS_PREFIX) else "linkedin"
+    # Himalayas ids are guid URLs, Jooble ids are "jooble:<id>", LinkedIn ids are numeric
+    if source_id.startswith(HIMALAYAS_PREFIX):
+        return "himalayas"
+    return "jooble" if source_id.startswith(JOOBLE_PREFIX) else "linkedin"
 
 
 def _split(value) -> list[str]:
