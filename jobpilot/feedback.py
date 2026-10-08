@@ -4,6 +4,8 @@ SELECT/INSERT/UPDATE feedback, applications and application_events and only read
 Callers own the transaction: nothing here commits, so a function that writes two rows (an application
 and its first event) is all-or-nothing inside the caller's `with conn.transaction():`.
 Values only ever reach Postgres as %s parameters, never pasted into the SQL text."""
+import datetime as dt
+
 from psycopg.rows import dict_row
 
 LABELS = ("up", "down")
@@ -77,6 +79,32 @@ def add_application(conn, company: str, title: str, url: str | None, notes: str 
         _add_event(conn, row[0], "applied")
         return row[0], True
     return _existing(conn, company, title), False
+
+
+def import_application(conn, company: str, title: str, url: str | None, applied_on: dt.date,
+                       notes: str | None = None, job_id: int | None = None) -> tuple[int, bool]:
+    """One spreadsheet row (jobpilot.import_applications). Like add_application, but with the real applied
+    date and an optional matched job. Returns (application_id, created); created is False when the same
+    company, title and date, or the same job, is already tracked, so re-running the import is safe."""
+    # no conflict target: covers (company, title, applied_on) and the partial unique key on job_id
+    row = conn.execute("INSERT INTO applications (job_id, company, title, url, applied_on, notes, source) "
+                       "VALUES (%s, %s, %s, %s, %s, %s, 'import') ON CONFLICT DO NOTHING RETURNING id",
+                       (job_id, company, title, url, applied_on, notes)).fetchone()
+    if row:
+        # dated on the day applied, not today, so "days from applied to interview" stays true later
+        conn.execute("INSERT INTO application_events (application_id, status, at) VALUES (%s, 'applied', %s)",
+                     (row[0], applied_on))
+        return row[0], True
+    if job_id is not None:
+        found = conn.execute("SELECT id FROM applications WHERE job_id = %s", (job_id,)).fetchone()
+        if found:
+            return found[0], False
+    found = conn.execute("SELECT id FROM applications WHERE company = %s AND title = %s AND applied_on = %s",
+                         (company, title, applied_on)).fetchone()
+    if job_id is not None:  # link a manual row to the job, as mark_applied does; never move a linked one
+        conn.execute("UPDATE applications SET job_id = %s, updated_at = now() WHERE id = %s AND job_id IS NULL",
+                     (job_id, found[0]))
+    return found[0], False
 
 
 def set_status(conn, application_id: int, status: str, note: str | None = None) -> bool:
