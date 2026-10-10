@@ -1,0 +1,5 @@
+# Local embedding model (step 7): ONNX runtime + tokenizer + numpy, no torch. Pinned exactly like
+# requirements-api.txt; the API image will include this file only once it serves /search.
+onnxruntime==1.31.0
+tokenizers==0.23.3
+numpy==2.3.5
