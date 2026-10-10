@@ -1,6 +1,8 @@
 # scraped data and run logs stay local
 output/
 logs/
+# the downloaded embedding model (~135 MB): python -m jobpilot.embed --download
+models/
 ~$*
 
 # secrets and personal details
