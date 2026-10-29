@@ -7,6 +7,8 @@ models/
 
 # secrets and personal details
 .env
+# the CV profile that gets embedded; cv_profile.example.txt shows the shape
+cv_profile.txt
 COPILOT_AGENT_SETUP.md
 
 # Python

@@ -1,0 +1,6 @@
+Jane Example (a fictional sample profile).
+Junior software engineer, recent computer engineering graduate, looking for an entry-level or internship role.
+Skills: Python, SQL, PostgreSQL, Docker, FastAPI, Git, REST APIs, basic Azure.
+Projects: a demo to-do API with tests and CI; a small data pipeline that loads CSV files into Postgres.
+Languages: English (fluent), Turkish (native). Open to Istanbul, Ankara or remote.
+(Example only: copy this file to cv_profile.txt and write your own. Lead with the essentials, the model reads ~400 words at most.)

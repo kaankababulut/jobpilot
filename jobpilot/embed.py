@@ -2,9 +2,12 @@
 model computes from a text, so that texts with similar meaning get vectors pointing in similar directions.
 Comparing two vectors (cosine similarity) then measures how alike two jobs, or a job and the CV, are.
 This module builds the text that gets embedded, defines the Embedder interface and runs the real model
-(multilingual-e5-small, int8 ONNX) on the CPU. Download it once with `python -m jobpilot.embed --download`."""
+(multilingual-e5-small, int8 ONNX) on the CPU. Download it once with `python -m jobpilot.embed --download`.
+CLI: --download, --backfill (embed every job and the CV that lack a current vector), --query "text" (nearest jobs).
+Like jobpilot.backfill, the CLI fails loudly (exit code 1); safe_embed is the daily run's never-raising hook."""
 import argparse
 import hashlib
+import json
 import os
 import re
 import sys
@@ -12,6 +15,14 @@ import time
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol
+
+from jobpilot.db import connect, redact
+from jobpilot.migrate import add_url_env
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # same fallback as job_searcher: env vars set by hand still work
+    def load_dotenv(*args, **kwargs): return False
 
 PASSAGE_PREFIX = "passage: "  # e5 models are trained with "passage: " for documents and "query: " for searches
 QUERY_PREFIX = "query: "
@@ -158,6 +169,7 @@ UPSERT_CV_VECTOR_SQL = (
     "INSERT INTO cv_embeddings (model, embedding, text_hash) VALUES (%s, %s::vector, %s) "
     "ON CONFLICT (model) DO UPDATE SET embedding = EXCLUDED.embedding, text_hash = EXCLUDED.text_hash, "
     "updated_at = now()")
+CV_HASH_SQL = "SELECT text_hash FROM cv_embeddings WHERE model = %s"
 CHUNK = 50  # commit every 50 vectors: a crash or timeout keeps what's done, and the next run resumes from there
 
 
@@ -170,7 +182,7 @@ def _sync_cv(conn, embedder: Embedder, cv_text: str, memo: dict) -> None:
     if text == QUERY_PREFIX:
         return
     h = text_hash(text)
-    row = conn.execute("SELECT text_hash FROM cv_embeddings WHERE model = %s", (embedder.model,)).fetchone()
+    row = conn.execute(CV_HASH_SQL, (embedder.model,)).fetchone()
     if row and row[0] == h:
         return
     if h not in memo:
@@ -215,6 +227,91 @@ def sync_embeddings(conn, embedder: Embedder, cv_text: str | None = None, memo: 
     return written
 
 
+def read_config() -> dict:
+    with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def settings(cfg: dict) -> tuple[str, str]:
+    """(model_dir, cv_profile path) from config.json's "embeddings" block; relative paths start at the repo root."""
+    e = cfg.get("embeddings") or {}
+    return (os.path.join(ROOT, e.get("model_dir") or DEFAULT_MODEL_DIR),  # join keeps an absolute path as is
+            os.path.join(ROOT, e.get("cv_profile") or "cv_profile.txt"))
+
+
+def read_cv(path: str) -> str | None:
+    """The CV profile text, or None when the file doesn't exist: then there's simply no CV vector."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def run_sync(conn, embedder: Embedder, cv_text: str | None, memo: dict) -> tuple[int, bool]:
+    """sync_embeddings plus whether the CV vector changed, seen by comparing the stored hash before and after."""
+    def cv_hash():
+        row = conn.execute(CV_HASH_SQL, (embedder.model,)).fetchone()
+        return row[0] if row else None
+    before = cv_hash()
+    written = sync_embeddings(conn, embedder, cv_text, memo)
+    return written, cv_hash() != before
+
+
+def safe_embed(cfg: dict, state: dict, log: Callable[[str], None], url_var: str = "DATABASE_URL",
+               label: str = "Postgres") -> bool:
+    """The daily run's hook, called after each successful load. Like db.safe_load it never raises and logs one
+    line, so embeddings can't break the run. state is one dict per run shared by both databases: it holds the
+    model (loaded at most once, a failed load included) and the memo, so Azure reuses the local vectors."""
+    def say(msg: str) -> None:
+        try:  # a failed log line must not break the run either
+            log(msg)
+        except Exception:
+            pass
+
+    name, url = f"Embeddings ({label})", ""
+    try:
+        if not (cfg.get("embeddings") or {}).get("enabled"):
+            say(f"{name} skipped: disabled")
+            return False
+        url = os.environ.get(url_var, "").strip()
+        if not url:
+            say(f"{name} skipped: {url_var} not set")
+            return False
+        start = time.perf_counter()
+        model_dir, cv_path = settings(cfg)
+        if "embedder" not in state:  # ~1 s and ~150 MB: once per run, not once per database
+            state["embedder"], state["reason"] = load_embedder(model_dir)
+        if state["embedder"] is None:
+            say(f"{name} skipped: {state['reason']}")
+            return False
+        cv = read_cv(cv_path)
+        with connect(url) as conn:
+            written, cv_new = run_sync(conn, state["embedder"], cv, state.setdefault("memo", {}))
+    except Exception as e:  # not BaseException, so Ctrl+C still stops the run
+        say(f"WARNING: {name} skipped: {redact(e, url)}")
+        return False
+    note = ", CV updated" if cv_new else ("" if cv is not None else f", no CV ({os.path.basename(cv_path)} missing)")
+    say(f"{name}: {written} new vectors{note} in {time.perf_counter() - start:.1f}s")
+    return True
+
+
+# nearest jobs by cosine distance (<=>); 1 - distance is the cosine similarity shown as the score.
+# Filtered by model, so a query vector is never compared with another model's vectors
+NEAREST_SQL = """
+SELECT 1 - (e.embedding <=> %(q)s::vector) AS score, j.title, j.company, j.id
+FROM job_embeddings e JOIN jobs j ON j.id = e.job_id
+WHERE e.model = %(model)s
+ORDER BY e.embedding <=> %(q)s::vector, j.id
+LIMIT %(limit)s"""
+
+
+def nearest(conn, embedder: Embedder, text: str, limit: int = 10) -> list[tuple]:
+    """(score, title, company, id) of the jobs closest in meaning to text, best first."""
+    q = to_pgvector(embedder.embed_query(text))
+    return conn.execute(NEAREST_SQL, {"q": q, "model": embedder.model, "limit": limit}).fetchall()
+
+
 def _sha256(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -251,21 +348,71 @@ def download(model_dir: str = DEFAULT_MODEL_DIR, log: Callable[[str], None] = pr
         log(f"{name}: downloaded and verified")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, embedder: Embedder | None = None) -> int:
+    """embedder: tests pass a FakeEmbedder; otherwise the real model is loaded from the model dir."""
     parser = argparse.ArgumentParser(prog="python -m jobpilot.embed", description="Embedding model tools")
-    parser.add_argument("--download", action="store_true", help=f"download the pinned {HF_REPO} files")
-    parser.add_argument("--model-dir", default=DEFAULT_MODEL_DIR, help="where the model files live")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--download", action="store_true", help=f"download the pinned {HF_REPO} files")
+    action.add_argument("--backfill", action="store_true", help="embed every job (and the CV) without a current vector")
+    action.add_argument("--query", metavar="TEXT", help="print the jobs nearest to TEXT (read-only)")
+    parser.add_argument("--limit", type=int, default=10, help="how many jobs --query prints (default 10)")
+    parser.add_argument("--model-dir", help="where the model files live (default: embeddings.model_dir in config.json)")
+    add_url_env(parser)
     args = parser.parse_args(argv)
-    if not args.download:
+    if not (args.download or args.backfill or args.query):
         parser.print_help()
         return 1
+    if args.limit < 1:
+        parser.error("--limit must be at least 1")
     try:
-        download(args.model_dir)
+        model_dir, cv_path = settings(read_config())
+    except Exception as e:
+        print(f"ERROR: config.json not read: {e}", file=sys.stderr)
+        return 1
+    model_dir = args.model_dir or model_dir
+    if args.download:
+        return _download(model_dir)
+    load_dotenv(os.path.join(ROOT, ".env"))
+    url = os.environ.get(args.url_env, "").strip()
+    if not url:
+        print(f"ERROR: {args.url_env} not set", file=sys.stderr)  # the name only, never a value
+        return 1
+    if embedder is None:
+        embedder, reason = load_embedder(model_dir)
+        if embedder is None:
+            print(f"ERROR: {reason}", file=sys.stderr)  # the reason already says to run --download
+            return 1
+    try:
+        if args.query:
+            with connect(url, read_only=True) as conn:
+                rows = nearest(conn, embedder, args.query, args.limit)
+            if not rows:
+                print(f"no vectors for {embedder.model}; run python -m jobpilot.embed --backfill")
+            for score, title, company, job_id in rows:
+                print(f"{score:.3f}  {title} | {company or '-'}  (id {job_id})")
+            return 0
+        cv = read_cv(cv_path)
+        if cv is None:  # not an error: jobs still get vectors, only the CV row is missing
+            print(f"no CV profile at {cv_path}; embedding jobs only (copy cv_profile.example.txt to start one)")
+        start = time.perf_counter()
+        with connect(url) as conn:
+            written, cv_new = run_sync(conn, embedder, cv, {})
+    except Exception as e:
+        print(f"ERROR: embedding {'query' if args.query else 'backfill'} failed: {redact(e, url)}", file=sys.stderr)
+        return 1
+    print(f"{written} jobs embedded, CV {'updated' if cv_new else 'not updated'}, "
+          f"in {time.perf_counter() - start:.1f}s ({embedder.model})")
+    return 0
+
+
+def _download(model_dir: str) -> int:
+    try:
+        download(model_dir)
     except Exception as e:
         print(f"ERROR: download failed: {e}", file=sys.stderr)
         return 1
     start = time.perf_counter()
-    embedder, reason = load_embedder(args.model_dir)  # proves the files actually load, not just that they exist
+    embedder, reason = load_embedder(model_dir)  # proves the files actually load, not just that they exist
     if embedder is None:
         print(f"ERROR: {reason}", file=sys.stderr)
         return 1
