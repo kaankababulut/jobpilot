@@ -138,6 +138,83 @@ def load_embedder(model_dir: str = DEFAULT_MODEL_DIR) -> tuple[Embedder | None, 
         return None, f"model not loaded ({type(e).__name__}: {e})"
 
 
+# every job with its skills and the hash stored for this model (NULL: no vector yet), in one round trip.
+# Skills are sorted in Python, not by ORDER BY: local and Azure may use different collations, and the
+# text must be identical on both or the memo misses and the two databases get different vectors.
+JOBS_TO_CHECK_SQL = """
+SELECT j.id, j.title, j.company, j.description,
+       array_remove(array_agg(s.name), NULL) AS skills, e.text_hash
+FROM jobs j
+LEFT JOIN job_skills js ON js.job_id = j.id
+LEFT JOIN skills s ON s.skill_id = js.skill_id
+LEFT JOIN job_embeddings e ON e.job_id = j.id AND e.model = %s
+GROUP BY j.id, e.text_hash
+ORDER BY j.id"""
+UPSERT_JOB_VECTOR_SQL = (
+    "INSERT INTO job_embeddings (job_id, model, embedding, dims, text_hash) VALUES (%s, %s, %s::vector, %s, %s) "
+    "ON CONFLICT (job_id, model) DO UPDATE SET embedding = EXCLUDED.embedding, dims = EXCLUDED.dims, "
+    "text_hash = EXCLUDED.text_hash, updated_at = now()")
+UPSERT_CV_VECTOR_SQL = (
+    "INSERT INTO cv_embeddings (model, embedding, text_hash) VALUES (%s, %s::vector, %s) "
+    "ON CONFLICT (model) DO UPDATE SET embedding = EXCLUDED.embedding, text_hash = EXCLUDED.text_hash, "
+    "updated_at = now()")
+CHUNK = 50  # commit every 50 vectors: a crash or timeout keeps what's done, and the next run resumes from there
+
+
+def _sync_cv(conn, embedder: Embedder, cv_text: str, memo: dict) -> None:
+    # The CV is embedded as a "query: ", not a "passage: ". e5 is trained asymmetrically: a short "what I'm
+    # looking for" (query) is matched against the documents that answer it (passages). Ranking jobs for the CV
+    # is that retrieval task, the CV being the question and the jobs the answers, and it puts the CV on the
+    # same side as /search queries. Long CVs are cut at 512 tokens, so the profile should lead with the essentials.
+    text = QUERY_PREFIX + re.sub(r"\s+", " ", cv_text).strip()
+    if text == QUERY_PREFIX:
+        return
+    h = text_hash(text)
+    row = conn.execute("SELECT text_hash FROM cv_embeddings WHERE model = %s", (embedder.model,)).fetchone()
+    if row and row[0] == h:
+        return
+    if h not in memo:
+        memo[h] = embedder.embed_query(text)
+    conn.execute(UPSERT_CV_VECTOR_SQL, (embedder.model, to_pgvector(memo[h]), h))
+    conn.commit()
+
+
+def sync_embeddings(conn, embedder: Embedder, cv_text: str | None = None, memo: dict | None = None) -> int:
+    """Embeds every job whose vector for embedder.model is missing or was made from different text, plus the
+    CV when cv_text is given; returns how many job vectors were written. Commits per chunk of CHUNK jobs.
+    memo maps model -> {text_hash -> vector}: pass the same dict for the second database in a run (local,
+    then Azure) and identical texts are embedded only once. Keyed by model, so a shared memo can never hand
+    one model's vector to another (same text, same dims, but numbers that mean different things)."""
+    memo = (memo if memo is not None else {}).setdefault(embedder.model, {})
+    if cv_text:
+        _sync_cv(conn, embedder, cv_text, memo)
+    todo, empty = [], []
+    for job_id, title, company, description, skills, stored in conn.execute(JOBS_TO_CHECK_SQL, (embedder.model,)):
+        text = embed_text({"title": title, "company": company, "skills": sorted(skills), "description": description})
+        if text == PASSAGE_PREFIX:  # nothing to embed: a vector of no words is noise that would rank at random
+            if stored is not None:
+                empty.append(job_id)
+        elif stored != (h := text_hash(text)):
+            todo.append((job_id, text, h))
+    conn.commit()  # ends the read transaction, so each chunk below is its own short one
+    if empty:  # the text was emptied since: drop the stale vector rather than keep describing the old text
+        conn.execute("DELETE FROM job_embeddings WHERE model = %s AND job_id = ANY(%s)", (embedder.model, empty))
+        conn.commit()
+    written = 0
+    for i in range(0, len(todo), CHUNK):
+        chunk = todo[i:i + CHUNK]
+        new = list(dict.fromkeys(h for _, _, h in chunk if h not in memo))  # dedupe: identical reposts embed once
+        texts = {h: t for _, t, h in chunk}
+        for h, vec in zip(new, embedder.embed_passages([texts[h] for h in new])):
+            memo[h] = vec
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_JOB_VECTOR_SQL,
+                            [(job_id, embedder.model, to_pgvector(memo[h]), embedder.dims, h) for job_id, _, h in chunk])
+        conn.commit()
+        written += len(chunk)
+    return written
+
+
 def _sha256(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
