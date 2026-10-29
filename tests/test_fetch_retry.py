@@ -18,6 +18,7 @@ def run(monkeypatch):
     monkeypatch.setattr(js, "log", lines.append)
     monkeypatch.setattr(js.time, "sleep", sleeps.append)
     monkeypatch.setattr(js, "FETCH_RETRY_WAIT", 0)
+    monkeypatch.setattr(js, "FETCH_ATTEMPTS", 3)  # the tests count rounds; the real value is larger
     return lines, sleeps
 
 
