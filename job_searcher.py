@@ -20,8 +20,10 @@ except ImportError:  # optional: a missing package must not stop the Excel run
 HERE = os.path.dirname(os.path.abspath(__file__))
 ACTOR = "curious_coder~linkedin-jobs-scraper"
 # when every source fails with a network error (e.g. Wi-Fi "connected" but not passing traffic right
-# after the PC wakes), the whole fetch round is retried; tests set these to 0/small values
-FETCH_ATTEMPTS, FETCH_RETRY_WAIT = 3, 120
+# after the PC wakes), the whole fetch round is retried; tests set these to 0/small values.
+# 8 x 120 s waits up to ~14 min: two runs in Oct 2026 gave up after 6 min with Wi-Fi still down,
+# and a failed round costs nothing (no source answered, so no Apify credit was used)
+FETCH_ATTEMPTS, FETCH_RETRY_WAIT = 8, 120
 # not plain OSError: that would also count e.g. a locked file as "network down"
 NETWORK_ERRORS = (urllib.error.URLError, ConnectionError, TimeoutError, socket.gaierror, ssl.SSLError)
 
@@ -610,6 +612,9 @@ def fetch_all(sources: list, seen: set, cfg: dict) -> tuple[list, int]:
 
 
 def main():
+    # first line of every run: on 29 Oct 2026 a run sat silent for 12 min after the PC woke, and without
+    # this line the log couldn't show whether it had started at all
+    log("Run started.")
     # from the script folder, since Task Scheduler's working directory varies; existing env vars win
     load_dotenv(os.path.join(HERE, ".env"))
     cfg = json.load(open(os.path.join(HERE, "config.json"), encoding="utf-8"))
