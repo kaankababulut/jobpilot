@@ -10,10 +10,6 @@ models/
 # the CV profile that gets embedded; cv_profile.example.txt shows the shape
 cv_profile.txt
 COPILOT_AGENT_SETUP.md
-cv_profile.txt
-
-# the downloaded embedding model (~135 MB; python -m jobpilot.embed --download)
-models/
 
 # Python
 __pycache__/
