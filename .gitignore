@@ -1,15 +1,15 @@
 # scraped data and run logs stay local
 output/
 logs/
+# the downloaded embedding model (~135 MB): python -m jobpilot.embed --download
+models/
 ~$*
 
 # secrets and personal details
 .env
-COPILOT_AGENT_SETUP.md
+# the CV profile that gets embedded; cv_profile.example.txt shows the shape
 cv_profile.txt
-
-# the downloaded embedding model (~135 MB; python -m jobpilot.embed --download)
-models/
+COPILOT_AGENT_SETUP.md
 
 # Python
 __pycache__/

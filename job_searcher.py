@@ -11,7 +11,7 @@ from collections import Counter
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
-from jobpilot import azure_firewall, db as jobdb
+from jobpilot import azure_firewall, db as jobdb, embed
 try:
     from dotenv import load_dotenv
 except ImportError:  # optional: a missing package must not stop the Excel run
@@ -548,7 +548,9 @@ def load_databases(rows: list[dict], today: str, cfg: dict) -> None:
     # alongside Excel, never instead of it: safe_load logs and returns False on any DB problem.
     # Each target fails safe on its own, and the 30-day window means a missed cloud day catches up next run.
     categories, cv = {k: v[0] for k, v in SKILLS.items()}, set(cfg["cv_skills"])
-    jobdb.safe_load(rows, today, categories, cv, log)
+    emb = {}  # one model load and one memo for both databases; safe_embed never raises either
+    if jobdb.safe_load(rows, today, categories, cv, log):
+        embed.safe_embed(cfg, emb, log)
     # the home IP changes, and Azure silently drops unlisted IPs: point the firewall rule at today's IP first
     try:
         azure_firewall.update_home_rule(cfg, log)
@@ -557,7 +559,8 @@ def load_databases(rows: list[dict], today: str, cfg: dict) -> None:
             log(f"WARNING: Azure firewall update failed: {type(e).__name__}")
         except Exception:
             pass
-    jobdb.safe_load(rows, today, categories, cv, log, url_var="AZURE_DATABASE_URL", label="Azure Postgres")
+    if jobdb.safe_load(rows, today, categories, cv, log, url_var="AZURE_DATABASE_URL", label="Azure Postgres"):
+        embed.safe_embed(cfg, emb, log, url_var="AZURE_DATABASE_URL", label="Azure Postgres")
 
 
 def is_network_error(e: Exception) -> bool:

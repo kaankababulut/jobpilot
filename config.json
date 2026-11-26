@@ -24,6 +24,7 @@
   "output_dir": "output",
   "master_window_days": 30,
   "azure_firewall": {"resource_group": "rg-jobpilot", "server": "psql-jobpilot-kk", "rule": "home"},
+  "embeddings": {"enabled": true, "model_dir": "models/me5-small", "cv_profile": "cv_profile.txt"},
 
   "include_title_keywords": [
     "engineer", "developer", "software", "data", "analyst", "analytics", "intelligence",

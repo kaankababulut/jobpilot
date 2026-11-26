@@ -239,6 +239,7 @@ def test_slow_azure_never_exceeds_the_budget():
 
 def test_load_databases_updates_firewall_before_azure_load(monkeypatch):
     order = []
+    monkeypatch.setattr(job_searcher, "log", lambda msg: None)  # both loads "succeed", so safe_embed logs its skip line
     monkeypatch.setattr(job_searcher.jobdb, "safe_load",
                         lambda rows, today, cats, cv, log, **kw: order.append(kw.get("label", "local")) or True)
     monkeypatch.setattr(job_searcher.azure_firewall, "update_home_rule", lambda cfg, log: order.append("firewall") or True)
