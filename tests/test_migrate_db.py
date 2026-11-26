@@ -101,7 +101,9 @@ def test_real_migrations_build_an_empty_schema(empty):
     assert every[:2] == ["001", "002"]
     assert [m.version for m in migrate.apply(empty, migrate.DEFAULT_DIR)] == every
     for t in ("jobs", "skills", "job_skills", "runs", "feedback", "applications", "application_events", "labelled_jobs",
-              "job_embeddings", "cv_embeddings", "llm_calls", "llm_spend_monthly"):
+              "job_embeddings", "cv_embeddings", "llm_calls", "llm_spend_monthly", "companies", "company_jobs",
+              "company_profiles", "outreach_drafts", "outreach_decisions", "outreach_sends", "outreach_replies",
+              "outreach_status"):
         assert table_exists(empty, t)
     assert recorded(empty)[:2] == [("001", "initial"), ("002", "api_reader_role")]
 
