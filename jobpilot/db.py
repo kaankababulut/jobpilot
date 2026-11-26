@@ -128,6 +128,22 @@ def redact(e: Exception, url: str) -> str:
 # Azure's firewall often drops packets silently instead, which psycopg reports as
 # 'ConnectionTimeout: connection timeout expired' (matched lowercased, type name included)
 FIREWALL_HINTS = ("pg_hba.conf", "not allowed", "connectiontimeout", "timeout expired")
+# the same symptoms on a local database mean the Docker container isn't running, not a firewall
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def _hint(url: str, msg: str) -> str:
+    """What to try next, from the error text and whether the database is local."""
+    low = msg.lower()
+    try:
+        local = (urlsplit(url).hostname or "") in LOCAL_HOSTS
+    except ValueError:  # not a URL (e.g. a key=value DSN): fall back to the firewall hint
+        local = False
+    if local and any(h in low for h in FIREWALL_HINTS + ("connection refused",)):
+        return "; is Docker Desktop running? (docker compose up -d)"
+    if any(h in low for h in FIREWALL_HINTS):  # a dynamic home IP is the usual cause
+        return "; if your IP changed, update the database firewall rule"
+    return ""
 
 
 def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills: set[str],
@@ -156,9 +172,7 @@ def safe_load(rows: list[dict], run_date, categories: dict[str, str], cv_skills:
             record_run(conn, "daily", run_date, len(rows), written)
     except Exception as e:  # not BaseException, so Ctrl+C still stops the run
         msg = f"WARNING: {label} load skipped: {redact(e, url)}"
-        if any(h in msg.lower() for h in FIREWALL_HINTS):  # a dynamic home IP is the usual cause
-            msg += "; if your IP changed, update the database firewall rule"
-        say(msg)
+        say(msg + _hint(url, msg))
         return False
     say(f"{label}: wrote {written} of {len(rows)} jobs")
     return True
