@@ -6,6 +6,10 @@ logs/
 # secrets and personal details
 .env
 COPILOT_AGENT_SETUP.md
+cv_profile.txt
+
+# the downloaded embedding model (~135 MB; python -m jobpilot.embed --download)
+models/
 
 # Python
 __pycache__/

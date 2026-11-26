@@ -255,3 +255,38 @@ def test_failed_local_load_does_not_block_azure_load(monkeypatch):
     job_searcher.load_databases([{"Job ID": "1"}], "2026-10-01", {"cv_skills": ["Python"]})
     assert [c[4] for c in calls] == [{}, {"url_var": "AZURE_DATABASE_URL", "label": "Azure Postgres"}]
     assert calls[0][:4] == calls[1][:4] and calls[0][3] == {"Python"}
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]"])
+@pytest.mark.parametrize("exc", [
+    ConnectionTimeout("connection timeout expired"),
+    RuntimeError('connection failed: connection to server at "127.0.0.1", port 5432 failed: Connection refused'),
+])
+def test_local_connection_failure_hints_docker_not_firewall(monkeypatch, host, exc):
+    # a local database that times out or refuses means Docker Desktop is off; the firewall hint misled
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://jobs:s3cretPass@{host}:5432/jobs")
+
+    def boom(url):
+        raise exc
+    monkeypatch.setattr(db, "connect", boom)
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append) is False
+    assert len(lines) == 1 and lines[0].startswith("WARNING: Postgres load skipped:")
+    assert lines[0].endswith("; is Docker Desktop running? (docker compose up -d)")
+    assert "firewall" not in lines[0] and "s3cretPass" not in lines[0]
+
+
+def test_local_other_error_gets_no_hint(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", URL)
+
+    def boom(url):
+        raise RuntimeError("relation \"jobs\" does not exist")
+    monkeypatch.setattr(db, "connect", boom)
+    lines = []
+    assert db.safe_load([], "2026-10-01", {}, set(), lines.append) is False
+    assert "Docker" not in lines[0] and "firewall" not in lines[0]
+
+
+def test_non_url_dsn_falls_back_to_firewall_hint():
+    assert db._hint("host=10.0.0.5 dbname=jobs", "ConnectionTimeout: connection timeout expired").endswith(
+        "update the database firewall rule")
